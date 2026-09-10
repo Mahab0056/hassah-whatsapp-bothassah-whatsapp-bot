@@ -14,6 +14,7 @@ const express = require('express');
 const wa = require('./wa');
 const leads = require('./leads');
 const F = require('./flows');
+const inbox = require('./inbox');
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
@@ -84,6 +85,14 @@ async function handle(phone, incoming) {
     return showMenu(phone);
   }
 
+  // ── كلمات التطبيق: نرسل الروابط بأي وقت ──
+  if (text && s.step !== 'AGENT') {
+    const t = text.toLowerCase().trim();
+    if (F.APP_KEYWORDS.some((k) => t === k || t.startsWith(k + ' ') || t.endsWith(' ' + k))) {
+      return wa.sendText(phone, F.COMMON.apps);
+    }
+  }
+
   // ── أول رسالة ──
   if (s.step === 'NEW') {
     s.step = 'MENU';
@@ -142,9 +151,45 @@ async function handle(phone, incoming) {
     case 'STORE_AREA': {
       if (!text || text.length < 2) return wa.sendText(phone, F.STORE.askArea);
       s.data.area = text.slice(0, 120);
+      s.step = 'STORE_PHOTO_DAY';
+      return wa.sendList(phone, {
+        body: F.STORE.askPhotoDay,
+        button: F.STORE.photoDayList.button,
+        title: F.STORE.photoDayList.title,
+        rows: F.STORE.photoDayList.rows,
+      });
+    }
+
+    case 'STORE_PHOTO_DAY': {
+      if (!id || !F.LABELS[id]) {
+        return wa.sendList(phone, {
+          body: F.STORE.askPhotoDay,
+          button: F.STORE.photoDayList.button,
+          title: F.STORE.photoDayList.title,
+          rows: F.STORE.photoDayList.rows,
+        });
+      }
+      s.data.photoDay = id;
+      s.data.photoDayLabel = F.LABELS[id];
+      s.step = 'STORE_PHOTO_TIME';
+      return wa.sendButtons(phone, {
+        body: F.STORE.askPhotoTime, buttons: F.STORE.photoTimeButtons,
+      });
+    }
+
+    case 'STORE_PHOTO_TIME': {
+      if (!id || !F.LABELS[id]) {
+        return wa.sendButtons(phone, {
+          body: F.STORE.askPhotoTime, buttons: F.STORE.photoTimeButtons,
+        });
+      }
+      s.data.photoTime = id;
+      s.data.photoTimeLabel = F.LABELS[id];
       await leads.save({ type: 'store', phone, ...s.data }, wa);
+      const done = F.STORE.done(s.data);
       clearSession(phone);
-      return wa.sendText(phone, F.STORE.done(s.data));
+      await wa.sendText(phone, done);
+      return wa.sendText(phone, F.APP_LINKS.store);
     }
 
     /* ─────────── مسار المندوب ─────────── */
@@ -282,10 +327,20 @@ app.post('/webhook', async (req, res) => {
           wa.markRead(msg.id);
 
           const incoming = parseIncoming(msg);
+          const label = incoming.text || incoming.id || msg.type;
           console.log(`[in] +${phone} → ${incoming.id || incoming.text || msg.type}`);
+          inbox.record(phone, 'in', label, {
+            step: getSession(phone).step,
+            name: value.contacts?.[0]?.profile?.name,
+          });
+
+          // الموظف مسك المحادثة → البوت يسكت (إلا إذا كتب 0)
+          if (inbox.isBotPaused(phone) && String(incoming.text).trim() !== '0') continue;
+          if (String(incoming.text).trim() === '0') inbox.setBotPaused(phone, false);
 
           try {
             await handle(phone, incoming);
+            inbox.setStep(phone, getSession(phone).step);
           } catch (e) {
             console.error(`[bot] خطأ مع +${phone}:`, e.message, e.details || '');
             await wa.sendText(phone, F.COMMON.error).catch(() => {});
@@ -327,6 +382,41 @@ app.post('/send-otp', async (req, res) => {
   }
 });
 
+/* ═══════════════ إرسال إشعار بتمبلت ═══════════════
+   لأي رسالة معتمدة: تأكيد طلب، بالطريق، تم التسليم، ترحيب...
+   POST /send-template
+   { "phone":"9647801234567", "template":"hassah_order_confirmed", "params":["1042","5,000"] }
+   Header: Authorization: Bearer <INTERNAL_TOKEN>
+   ═════════════════════════════════════════════════ */
+app.post('/send-template', async (req, res) => {
+  const auth = req.get('authorization') || '';
+  if (process.env.INTERNAL_TOKEN && auth !== `Bearer ${process.env.INTERNAL_TOKEN}`) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+
+  const { phone, template, params = [], lang = 'ar' } = req.body || {};
+  if (!phone || !template) {
+    return res.status(400).json({ ok: false, error: 'phone و template مطلوبين' });
+  }
+
+  const to = String(phone).replace(/\D/g, '');
+  if (!/^964\d{9,10}$/.test(to)) {
+    return res.status(400).json({ ok: false, error: 'الرقم لازم يكون بصيغة 9647XXXXXXXXX' });
+  }
+
+  try {
+    const r = await wa.sendTemplate(to, template, params, lang);
+    console.log(`[tpl] ✅ ${template} → +${to}`);
+    res.json({ ok: true, messageId: r?.messages?.[0]?.id });
+  } catch (e) {
+    console.error(`[tpl] ❌ ${template} → +${to}`, e.details || e.message);
+    res.status(502).json({ ok: false, error: 'فشل الإرسال', details: e.details });
+  }
+});
+
+/* ═══════════════ الإنبوكس ═══════════════ */
+inbox.mount(app, wa);
+
 /* ═══════════════ صحة السيرفر ═══════════════ */
 app.get('/health', (_, res) =>
   res.json({ ok: true, sessions: sessions.size, workingHours: isWorkingHours() }));
@@ -336,7 +426,9 @@ if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`\n🟢 بوت ${F.BRAND} شغّال على المنفذ ${PORT}`);
     console.log(`   الويبهوك:  POST /webhook`);
-    console.log(`   إرسال OTP: POST /send-otp\n`);
+    console.log(`   إرسال OTP: POST /send-otp`);
+    console.log(`   إشعارات:   POST /send-template`);
+    console.log(`   الإنبوكس:  GET  /inbox?key=...\n`);
   });
 }
 
