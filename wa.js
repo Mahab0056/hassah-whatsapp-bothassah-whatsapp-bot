@@ -10,6 +10,15 @@ if (!API_KEY) {
   console.warn('[wa] ⚠️  D360_API_KEY مو مضبوط — الإرسال راح يفشل.');
 }
 
+// تسجيل الصادر بالإنبوكس (تحميل كسول حتى نتجنب الاستيراد الدائري)
+let _inbox = null;
+function logOut(to, text, by) {
+  try {
+    if (!_inbox) _inbox = require('./inbox');
+    _inbox.record(String(to), 'out', text, { by: by || 'bot' });
+  } catch { /* الإنبوكس اختياري */ }
+}
+
 async function call(path, body) {
   const res = await fetch(`${API_BASE}${path}`, {
     method: 'POST',
@@ -31,14 +40,21 @@ async function call(path, body) {
 const send = (payload) => call('/messages', { messaging_product: 'whatsapp', ...payload });
 
 /* ---------- رسالة نصية ---------- */
-function sendText(to, body, preview = false) {
+function sendText(to, body, preview = true) {
+  logOut(to, body);
   return send({ recipient_type: 'individual', to, type: 'text',
     text: { body, preview_url: preview } });
 }
 
 /* ---------- أزرار (٣ كحد أقصى، ٢٠ حرف للزر) ---------- */
 function sendButtons(to, { body, footer, header, buttons }) {
+  if (!Array.isArray(buttons) || !buttons.length) {
+    // حماية: إذا الأزرار ناقصة لأي سبب، نرسل النص بدل ما ننهار
+    console.error('[wa] ⚠️ أزرار مفقودة — رجعنا لرسالة نصية');
+    return sendText(to, body);
+  }
   if (buttons.length > 3) throw new Error('واتساب يسمح بـ 3 أزرار كحد أقصى');
+  logOut(to, body);
   const interactive = {
     type: 'button',
     body: { text: body },
@@ -56,7 +72,12 @@ function sendButtons(to, { body, footer, header, buttons }) {
 
 /* ---------- قائمة (١٠ صفوف كحد أقصى) ---------- */
 function sendList(to, { body, footer, header, button, title, rows }) {
+  if (!Array.isArray(rows) || !rows.length) {
+    console.error('[wa] ⚠️ صفوف مفقودة — رجعنا لرسالة نصية');
+    return sendText(to, body);
+  }
   if (rows.length > 10) throw new Error('واتساب يسمح بـ 10 صفوف كحد أقصى');
+  logOut(to, body);
   const interactive = {
     type: 'list',
     body: { text: body },
@@ -104,4 +125,25 @@ function sendOtp(to, code, templateName = process.env.OTP_TEMPLATE || 'hassah_ot
   });
 }
 
-module.exports = { sendText, sendButtons, sendList, markRead, sendOtp };
+/* ================================================================
+   إرسال أي تمبلت معتمد — للإشعارات (تأكيد طلب، بالطريق، تم التسليم...)
+   params: مصفوفة نصوص تنعبى بمكان {{1}} {{2}} ... بترتيبها
+   ================================================================ */
+function sendTemplate(to, templateName, params = [], lang = 'ar') {
+  const components = [];
+  if (params.length) {
+    components.push({
+      type: 'body',
+      parameters: params.map((p) => ({ type: 'text', text: String(p) })),
+    });
+  }
+  logOut(to, `[تمبلت: ${templateName}] ${params.join(' · ')}`, 'system');
+  return send({
+    recipient_type: 'individual',
+    to,
+    type: 'template',
+    template: { name: templateName, language: { code: lang }, components },
+  });
+}
+
+module.exports = { sendText, sendButtons, sendList, markRead, sendOtp, sendTemplate };
