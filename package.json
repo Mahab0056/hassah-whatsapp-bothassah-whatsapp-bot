@@ -1,0 +1,15 @@
+{
+  "name": "hassah-whatsapp-bot",
+  "version": "1.0.0",
+  "description": "بوت واتساب هسه — ردود تلقائية + إرسال OTP عبر 360dialog",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}
