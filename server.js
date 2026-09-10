@@ -151,20 +151,28 @@ async function handle(phone, incoming) {
     case 'COURIER_NAME': {
       if (!text || text.length < 2) return wa.sendText(phone, F.COURIER.askName);
       s.data.courierName = text.slice(0, 120);
-      s.step = 'COURIER_VEHICLE';
+      s.step = 'COURIER_BIKE';
       return wa.sendButtons(phone, {
-        body: F.COURIER.askVehicle, buttons: F.COURIER.vehicleButtons,
+        body: F.COURIER.askBike, buttons: F.COURIER.bikeButtons,
       });
     }
 
-    case 'COURIER_VEHICLE': {
+    case 'COURIER_BIKE': {
       if (!id || !F.LABELS[id]) {
         return wa.sendButtons(phone, {
-          body: F.COURIER.askVehicle, buttons: F.COURIER.vehicleButtons,
+          body: F.COURIER.askBike, buttons: F.COURIER.bikeButtons,
         });
       }
       s.data.vehicle = id;
       s.data.vehicleLabel = F.LABELS[id];
+
+      // ماكو دراجة → نحفظه بقائمة انتظار وننهي بلطف
+      if (id === 'BIKE_NO') {
+        await leads.save({ type: 'courier', status: 'no_bike', phone, ...s.data }, wa);
+        clearSession(phone);
+        return wa.sendText(phone, F.COURIER.noBike);
+      }
+
       s.step = 'COURIER_AREA';
       return wa.sendText(phone, F.COURIER.askArea);
     }
@@ -172,7 +180,7 @@ async function handle(phone, incoming) {
     case 'COURIER_AREA': {
       if (!text || text.length < 2) return wa.sendText(phone, F.COURIER.askArea);
       s.data.area = text.slice(0, 120);
-      await leads.save({ type: 'courier', phone, ...s.data }, wa);
+      await leads.save({ type: 'courier', status: 'ready', phone, ...s.data }, wa);
       clearSession(phone);
       return wa.sendText(phone, F.COURIER.done(s.data));
     }
