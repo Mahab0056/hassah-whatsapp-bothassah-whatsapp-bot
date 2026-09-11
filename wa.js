@@ -40,8 +40,8 @@ async function call(path, body) {
 const send = (payload) => call('/messages', { messaging_product: 'whatsapp', ...payload });
 
 /* ---------- رسالة نصية ---------- */
-function sendText(to, body, preview = true) {
-  logOut(to, body);
+function sendText(to, body, preview = true, by = 'bot') {
+  logOut(to, body, by);
   return send({ recipient_type: 'individual', to, type: 'text',
     text: { body, preview_url: preview } });
 }
