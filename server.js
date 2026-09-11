@@ -29,7 +29,7 @@ const TTL = F.SETTINGS.sessionTimeoutMinutes * 60 * 1000;
 function getSession(phone) {
   const s = sessions.get(phone);
   if (s && Date.now() - s.touchedAt < TTL) { s.touchedAt = Date.now(); return s; }
-  const fresh = { step: 'NEW', data: {}, touchedAt: Date.now() };
+  const fresh = { step: 'NEW', data: {}, name: '', touchedAt: Date.now() };
   sessions.set(phone, fresh);
   return fresh;
 }
@@ -52,8 +52,10 @@ function isWorkingHours() {
   return hour >= wh.start && hour < wh.end;
 }
 
-const showMenu = (to) => wa.sendButtons(to, {
-  body: F.MAIN_MENU.body, footer: F.MAIN_MENU.footer, buttons: F.MAIN_MENU.buttons,
+const showMenu = (to, name) => wa.sendButtons(to, {
+  body: typeof F.MAIN_MENU.body === 'function' ? F.MAIN_MENU.body(name) : F.MAIN_MENU.body,
+  footer: F.MAIN_MENU.footer,
+  buttons: F.MAIN_MENU.buttons,
 });
 
 /** يطلّع نص أو معرّف الزر/الصف من رسالة واتساب */
@@ -65,6 +67,15 @@ function parseIncoming(msg) {
     if (i.type === 'list_reply')   return { text: i.list_reply.title,   id: i.list_reply.id };
   }
   if (msg.type === 'button') return { text: msg.button?.text || '', id: msg.button?.payload || null };
+  if (msg.type === 'location') {
+    const l = msg.location || {};
+    const label = [l.name, l.address].filter(Boolean).join(' — ');
+    return {
+      text: label || `موقع: ${l.latitude}, ${l.longitude}`,
+      id: null,
+      location: { lat: l.latitude, lng: l.longitude, name: l.name || '', address: l.address || '' },
+    };
+  }
   return { text: '', id: null };
 }
 
@@ -78,11 +89,17 @@ async function handle(phone, incoming) {
   const { text, id } = incoming;
   const choice = id || text;
 
+  // اسم الزبون من بروفايل واتساب — نستخدمه بالتحية حتى تحس بشرية
+  if (incoming.name && !s.name) s.name = incoming.name;
+
   // "0" أو أي كلمة رجوع → القائمة الرئيسية
   if (isRestart(text)) {
+    const name = s.name;
     clearSession(phone);
-    getSession(phone).step = 'MENU';
-    return showMenu(phone);
+    const ns = getSession(phone);
+    ns.step = 'MENU';
+    ns.name = name;
+    return showMenu(phone, name);
   }
 
   // ── كلمات التطبيق: نرسل الروابط بأي وقت ──
@@ -96,7 +113,7 @@ async function handle(phone, incoming) {
   // ── أول رسالة ──
   if (s.step === 'NEW') {
     s.step = 'MENU';
-    return showMenu(phone);
+    return showMenu(phone, s.name);
   }
 
   switch (s.step) {
@@ -144,13 +161,26 @@ async function handle(phone, incoming) {
       }
       s.data.category = id;
       s.data.categoryLabel = F.LABELS[id];
-      s.step = 'STORE_AREA';
-      return wa.sendText(phone, F.STORE.askArea);
+      s.step = 'STORE_PHOTOS';
+      return wa.sendButtons(phone, {
+        body: F.STORE.askPhotos, buttons: F.STORE.photoButtons,
+      });
     }
 
-    case 'STORE_AREA': {
-      if (!text || text.length < 2) return wa.sendText(phone, F.STORE.askArea);
-      s.data.area = text.slice(0, 120);
+    case 'STORE_PHOTOS': {
+      if (!id || !F.LABELS[id]) {
+        return wa.sendButtons(phone, {
+          body: F.STORE.askPhotos, buttons: F.STORE.photoButtons,
+        });
+      }
+      s.data.photoMode = id;
+      s.data.photoModeLabel = F.LABELS[id];
+
+      // عنده صور جاهزة وما يريد تصوير → نتخطى الموعد ونروح للموقع
+      if (id === 'PH_HAVE') {
+        s.step = 'STORE_LOCATION';
+        return wa.sendText(phone, F.STORE.askLocation);
+      }
       s.step = 'STORE_PHOTO_DAY';
       return wa.sendList(phone, {
         body: F.STORE.askPhotoDay,
@@ -185,10 +215,29 @@ async function handle(phone, incoming) {
       }
       s.data.photoTime = id;
       s.data.photoTimeLabel = F.LABELS[id];
+      s.step = 'STORE_LOCATION';
+      return wa.sendText(phone, F.STORE.askLocation);
+    }
+
+    case 'STORE_LOCATION': {
+      // إما لوكيشن مدزوز، أو عنوان مكتوب بتفصيل كافي
+      if (incoming.location) {
+        const l = incoming.location;
+        s.data.lat = l.lat;
+        s.data.lng = l.lng;
+        s.data.mapUrl = `https://maps.google.com/?q=${l.lat},${l.lng}`;
+        s.data.locationText = [l.name, l.address].filter(Boolean).join(' — ') || 'لوكيشن مدزوز 📍';
+        s.data.area = s.data.locationText;
+      } else if (text && text.trim().length >= 8) {
+        s.data.locationText = text.slice(0, 300);
+        s.data.area = s.data.locationText;
+      } else {
+        return wa.sendText(phone, F.STORE.locationHint);
+      }
       await leads.save({ type: 'store', phone, ...s.data }, wa);
-      const done = F.STORE.done(s.data);
+      const doneMsg = F.STORE.done(s.data);
       clearSession(phone);
-      await wa.sendText(phone, done);
+      await wa.sendText(phone, doneMsg);
       return wa.sendText(phone, F.APP_LINKS.store);
     }
 
@@ -235,7 +284,7 @@ async function handle(phone, incoming) {
       if (choice === 'BACK_MENU') {
         clearSession(phone);
         getSession(phone).step = 'MENU';
-        return showMenu(phone);
+        return showMenu(phone, s.name);
       }
       if (choice === 'CUS_ORDER') {
         s.step = 'CUSTOMER_ORDER_NO';
@@ -295,7 +344,7 @@ async function handle(phone, incoming) {
 
     default:
       clearSession(phone);
-      return showMenu(phone);
+      return showMenu(phone, s.name);
   }
 }
 
@@ -333,6 +382,7 @@ app.post('/webhook', async (req, res) => {
           wa.markRead(msg.id);
 
           const incoming = parseIncoming(msg);
+          incoming.name = value.contacts?.[0]?.profile?.name || '';
           const label = incoming.text || incoming.id || msg.type;
           console.log(`[in] +${phone} → ${incoming.id || incoming.text || msg.type}`);
           inbox.record(phone, 'in', label, {
@@ -345,6 +395,8 @@ app.post('/webhook', async (req, res) => {
           if (String(incoming.text).trim() === '0') inbox.setBotPaused(phone, false);
 
           try {
+            // وقفة قصيرة — يشوف "يكتب..." بدل رد فوري كالروبوت
+            await wa.humanPause(incoming.text);
             await handle(phone, incoming);
             inbox.setStep(phone, getSession(phone).step);
           } catch (e) {
