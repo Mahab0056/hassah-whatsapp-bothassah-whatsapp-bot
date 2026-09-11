@@ -75,6 +75,7 @@ function record(phone, dir, text, meta = {}) {
     text: String(text || '').slice(0, 4000),
     at: Date.now(),
     by: meta.by || (dir === 'in' ? 'customer' : 'bot'),
+    st: meta.step || '',
   };
   t.messages.push(rec);
   if (t.messages.length > MAX_MSGS_PER_THREAD) t.messages.shift();
@@ -91,6 +92,64 @@ const markSeen   = (phone) => { thread(phone).unread = 0; };
 const isBotPaused = (phone) => !!threads.get(phone)?.botPaused;
 const setBotPaused = (phone, v) => { thread(phone).botPaused = !!v; };
 
+/* ── تصنيف المحادثة: متجر / مندوب / زبون ──
+   نستنتجه من خطوات المحادثة ومن الأزرار الي ضغطها. آخر تصنيف يفوز،
+   يعني إذا واحد بدأ مندوب وبعدين صار متجر ينحسب متجر. ═══ */
+const KINDS = { store: '🏪 متجر', courier: '🛵 مندوب', customer: '🛒 زبون', unknown: '💬 غير مصنّف' };
+
+function kindOf(t) {
+  let k = 'unknown';
+  for (const m of t.messages) {
+    const st = m.st || '';
+    const x = String(m.text || '');
+    if (st.startsWith('STORE') || x === 'MENU_STORE' || x.startsWith('CAT_') ||
+        x.startsWith('DAY_') || x.startsWith('TIME_') || x.includes('عندي متجر')) k = 'store';
+    else if (st.startsWith('COURIER') || x === 'MENU_COURIER' || x === 'BIKE_YES' ||
+             x === 'CAR_YES' || x === 'BIKE_NO' || x.includes('أشتغل مندوب')) k = 'courier';
+    else if (st.startsWith('CUSTOMER') || x === 'MENU_CUSTOMER' || x.startsWith('CUS_') ||
+             x.startsWith('FAQ_') || x.includes('عندي طلب')) k = 'customer';
+  }
+  if (k === 'unknown') {
+    const st = t.step || '';
+    if (st.startsWith('STORE')) k = 'store';
+    else if (st.startsWith('COURIER')) k = 'courier';
+    else if (st.startsWith('CUSTOMER') || st === 'AGENT') k = 'customer';
+  }
+  return k;
+}
+
+/* ── استرجاع الرسايل الي ضاعت قبل ما نركّب القرص الدائم ──
+   مصدرها سجلات السيرفر. تنستورد مرة وحدة بس — علامة على القرص تمنع التكرار. ═══ */
+function importRecovered() {
+  const marker = path.join(DATA_DIR, '.recovered');
+  const src = path.join(__dirname, 'recovered.jsonl');
+  try {
+    if (!fs.existsSync(src) || fs.existsSync(marker)) return;
+    let n = 0;
+    for (const line of fs.readFileSync(src, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      let r; try { r = JSON.parse(line); } catch { continue; }
+      if (!r.phone || !r.dir) continue;
+      const t = thread(r.phone);
+      if (t.messages.some((m) => m.at === r.at && m.text === r.text)) continue;
+      t.messages.push(r);
+      if (r.at > t.lastAt) t.lastAt = r.at;
+      appendFile(r);
+      n++;
+    }
+    for (const t of threads.values()) {
+      t.messages.sort((a, b) => a.at - b.at);
+      if (t.messages.length > MAX_MSGS_PER_THREAD) {
+        t.messages = t.messages.slice(-MAX_MSGS_PER_THREAD);
+      }
+    }
+    fs.writeFileSync(marker, new Date().toISOString());
+    console.log(`[inbox] 🧾 رجّعنا ${n} رسالة قديمة من سجلات السيرفر`);
+  } catch (e) {
+    console.error('[inbox] فشل استرجاع القديم:', e.message);
+  }
+}
+
 function list() {
   return [...threads.values()]
     .sort((a, b) => b.lastAt - a.lastAt)
@@ -98,6 +157,7 @@ function list() {
     .map((t) => ({
       phone: t.phone,
       name: t.name,
+      kind: kindOf(t),
       step: t.step,
       unread: t.unread,
       botPaused: t.botPaused,
@@ -123,7 +183,7 @@ header{background:var(--acc);padding:12px 16px;display:flex;align-items:center;g
 header h1{margin:0;font-size:16px;font-weight:600}
 header .dot{width:8px;height:8px;border-radius:50%;background:#3ddc84}
 main{flex:1;display:flex;min-height:0}
-#list{width:340px;border-left:1px solid var(--line);overflow-y:auto;flex:0 0 auto;background:var(--panel)}
+#list{overflow-y:auto;flex:1;min-height:0}
 #chat{flex:1;display:flex;flex-direction:column;min-width:0}
 .row{padding:12px 14px;border-bottom:1px solid var(--line);cursor:pointer}
 .row:hover{background:#1e222b}.row.sel{background:#222733}
@@ -133,6 +193,13 @@ main{flex:1;display:flex;min-height:0}
 .row .l{color:var(--dim);font-size:13px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .badge{background:#3ddc84;color:#04150c;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700}
 .tag{display:inline-block;background:#2a2f3a;color:#b9c0cc;border-radius:4px;padding:1px 6px;font-size:11px;margin-top:4px}
+.kind{display:inline-block;border-radius:4px;padding:1px 6px;font-size:11px;margin-top:4px;font-weight:600}
+.k-store{background:#3a2d12;color:#f0c674}.k-courier{background:#12303a;color:#7ad7f0}
+.k-customer{background:#16321f;color:#7fe0a0}.k-unknown{background:#2a2f3a;color:#9aa0aa}
+#filters{display:flex;gap:6px;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--panel);overflow-x:auto;flex:0 0 auto}
+#filters button{background:#2a2f3a;color:#c9cfd8;border-radius:14px;padding:5px 12px;font-size:13px;font-weight:600;white-space:nowrap}
+#filters button.on{background:var(--me);color:#fff}
+#listwrap{width:340px;border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0;flex:0 0 auto;background:var(--panel)}
 #head{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px;flex:0 0 auto}
 #head .p{font-weight:600;direction:ltr}
 #msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
@@ -146,11 +213,20 @@ button{background:var(--me);color:#fff;border:0;border-radius:20px;padding:10px 
 button.ghost{background:#2a2f3a;color:#c9cfd8;padding:6px 12px;font-size:13px;border-radius:8px}
 .empty{margin:auto;color:var(--dim);text-align:center;padding:40px}
 .note{font-size:12px;color:var(--dim);padding:0 12px 10px}
-@media(max-width:760px){#list{width:100%;}#list.hide{display:none}#chat.hide{display:none}}
+@media(max-width:760px){#listwrap{width:100%}#listwrap.hide{display:none}#chat.hide{display:none}}
 </style></head><body>
 <header><span class="dot"></span><h1>إنبوكس هسة</h1><span id="cnt" style="margin-inline-start:auto;font-size:13px;opacity:.8"></span><button id="bell" class="ghost" title="تنبيه صوتي" style="padding:4px 10px;font-size:16px;line-height:1">🔔</button></header>
 <main>
-  <div id="list"></div>
+  <div id="listwrap">
+    <div id="filters">
+      <button data-f="all" class="on">الكل</button>
+      <button data-f="courier">🛵 مندوبين</button>
+      <button data-f="store">🏪 متاجر</button>
+      <button data-f="customer">🛒 زبائن</button>
+      <button data-f="unread">🔴 غير مقروء</button>
+    </div>
+    <div id="list"></div>
+  </div>
   <div id="chat" class="hide">
     <div id="head"><span class="p" id="hp">—</span>
       <span><button class="ghost" id="btnBot">إيقاف البوت</button>
@@ -167,29 +243,52 @@ const $=id=>document.getElementById(id);
 const ago=t=>{const s=(Date.now()-t)/1000;if(s<60)return'الآن';if(s<3600)return Math.floor(s/60)+' د';if(s<86400)return Math.floor(s/3600)+' س';return Math.floor(s/86400)+' يوم';};
 const esc=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const STEPS={STORE_NAME:'🏪 تسجيل متجر',STORE_CATEGORY:'🏪 تسجيل متجر',STORE_AREA:'🏪 تسجيل متجر',STORE_PHOTO_DAY:'📸 موعد تصوير',STORE_PHOTO_TIME:'📸 موعد تصوير',COURIER_NAME:'🛵 تسجيل مندوب',COURIER_BIKE:'🛵 تسجيل مندوب',COURIER_AREA:'🛵 تسجيل مندوب',CUSTOMER_MENU:'🛒 زبون',CUSTOMER_ORDER_NO:'📦 يتابع طلب',CUSTOMER_FAQ:'❓ أسئلة',AGENT:'💬 ينتظر موظف',MENU:'القائمة'};
+const KINDS={store:{i:'🏪',t:'متجر'},courier:{i:'🛵',t:'مندوب'},customer:{i:'🛒',t:'زبون'},unknown:{i:'💬',t:'غير مصنّف'}};
+let filt='all', allThreads=[];
+document.querySelectorAll('#filters button').forEach(b=>b.onclick=()=>{
+  filt=b.dataset.f;
+  document.querySelectorAll('#filters button').forEach(x=>x.classList.toggle('on',x===b));
+  render();
+});
+const pass=t=>filt==='all'?true:filt==='unread'?t.unread>0:t.kind===filt;
 
 async function loadList(){
   const r=await fetch('/inbox/api/threads?key='+encodeURIComponent(KEY));
   if(!r.ok){$('list').innerHTML='<div class="empty">مفتاح غير صحيح</div>';return;}
   const d=await r.json();
-  $('cnt').textContent=d.threads.length+' محادثة';
+  allThreads=d.threads;
   onCounts(d.threads.reduce((n,t)=>n+(t.unread||0),0));
-  $('list').innerHTML=d.threads.map(t=>
-    '<div class="row'+(t.phone===cur?' sel':'')+'" onclick="open_(\\''+t.phone+'\\')">'+
-    '<div class="t"><span class="p">+'+t.phone+'</span><span class="w">'+ago(t.lastAt)+
+  render();
+}
+
+function render(){
+  const c={all:allThreads.length,unread:0,store:0,courier:0,customer:0};
+  allThreads.forEach(t=>{if(t.unread)c.unread++;if(c[t.kind]!==undefined)c[t.kind]++;});
+  document.querySelectorAll('#filters button').forEach(b=>{
+    const f=b.dataset.f, base=b.dataset.base||(b.dataset.base=b.textContent);
+    b.textContent=base+' '+(c[f]||0);
+  });
+  const rows=allThreads.filter(pass);
+  $('cnt').textContent=rows.length+' محادثة';
+  $('list').innerHTML=rows.map(t=>{
+    const k=KINDS[t.kind]||KINDS.unknown;
+    return '<div class="row'+(t.phone===cur?' sel':'')+'" onclick="open_(\\''+t.phone+'\\')">'+
+    '<div class="t"><span class="p">'+k.i+' +'+t.phone+'</span><span class="w">'+ago(t.lastAt)+
     (t.unread?' <span class="badge">'+t.unread+'</span>':'')+'</span></div>'+
     '<div class="l">'+(t.lastDir==='out'?'↩ ':'')+esc(t.last||'')+'</div>'+
+    '<span class="kind k-'+t.kind+'">'+k.i+' '+k.t+'</span> '+
     (t.step?'<span class="tag">'+(STEPS[t.step]||t.step)+'</span>':'')+
-    (t.botPaused?' <span class="tag">البوت متوقف</span>':'')+'</div>').join('')
-    ||'<div class="empty">ماكو محادثات بعد</div>';
+    (t.botPaused?' <span class="tag">البوت متوقف</span>':'')+'</div>';
+  }).join('')||'<div class="empty">ماكو محادثات بهذا التصنيف</div>';
 }
 async function open_(p){
   cur=p;
-  if(innerWidth<=760){$('list').classList.add('hide');$('chat').classList.remove('hide');}
+  if(innerWidth<=760){$('listwrap').classList.add('hide');$('chat').classList.remove('hide');}
   else $('chat').classList.remove('hide');
   const r=await fetch('/inbox/api/thread?key='+encodeURIComponent(KEY)+'&phone='+p);
   const t=await r.json();curData=t;
-  $('hp').textContent='+'+p;
+  const kk=KINDS[t.kind]||KINDS.unknown;
+  $('hp').textContent=kk.i+' +'+p+' · '+kk.t;
   $('btnBot').textContent=t.botPaused?'تشغيل البوت':'إيقاف البوت';
   const mins=t.lastInAt?Math.floor((Date.now()-t.lastInAt)/60000):9999;
   $('note').textContent=mins<1440
@@ -200,7 +299,7 @@ async function open_(p){
     (m.by==='agent'?' · موظف':m.by==='bot'?' · بوت':'')+'</span></div>').join('');
   $('msgs').scrollTop=1e9;loadList();
 }
-$('btnBack').onclick=()=>{$('list').classList.remove('hide');if(innerWidth<=760)$('chat').classList.add('hide');};
+$('btnBack').onclick=()=>{$('listwrap').classList.remove('hide');if(innerWidth<=760)$('chat').classList.add('hide');};
 $('btnBot').onclick=async()=>{
   if(!cur)return;
   await fetch('/inbox/api/bot',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -295,7 +394,7 @@ function mount(app, wa) {
     markSeen(t.phone);
     const lastIn = [...t.messages].reverse().find((m) => m.dir === 'in');
     res.json({
-      phone: t.phone, step: t.step, botPaused: t.botPaused,
+      phone: t.phone, step: t.step, kind: kindOf(t), botPaused: t.botPaused,
       lastInAt: lastIn ? lastIn.at : null, messages: t.messages,
     });
   });
@@ -324,5 +423,6 @@ function mount(app, wa) {
 }
 
 loadFromDisk();
+importRecovered();
 
 module.exports = { record, setStep, markSeen, isBotPaused, setBotPaused, list, get, mount };
