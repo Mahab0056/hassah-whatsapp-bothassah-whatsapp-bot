@@ -123,7 +123,7 @@ button.ghost{background:#2a2f3a;color:#c9cfd8;padding:6px 12px;font-size:13px;bo
 .note{font-size:12px;color:var(--dim);padding:0 12px 10px}
 @media(max-width:760px){#list{width:100%;}#list.hide{display:none}#chat.hide{display:none}}
 </style></head><body>
-<header><span class="dot"></span><h1>إنبوكس هسة</h1><span id="cnt" style="margin-inline-start:auto;font-size:13px;opacity:.8"></span></header>
+<header><span class="dot"></span><h1>إنبوكس هسة</h1><span id="cnt" style="margin-inline-start:auto;font-size:13px;opacity:.8"></span><button id="bell" class="ghost" title="تنبيه صوتي" style="padding:4px 10px;font-size:16px;line-height:1">🔔</button></header>
 <main>
   <div id="list"></div>
   <div id="chat" class="hide">
@@ -148,6 +148,7 @@ async function loadList(){
   if(!r.ok){$('list').innerHTML='<div class="empty">مفتاح غير صحيح</div>';return;}
   const d=await r.json();
   $('cnt').textContent=d.threads.length+' محادثة';
+  onCounts(d.threads.reduce((n,t)=>n+(t.unread||0),0));
   $('list').innerHTML=d.threads.map(t=>
     '<div class="row'+(t.phone===cur?' sel':'')+'" onclick="open_(\\''+t.phone+'\\')">'+
     '<div class="t"><span class="p">+'+t.phone+'</span><span class="w">'+ago(t.lastAt)+
@@ -191,6 +192,56 @@ async function send(){
 }
 $('send').onclick=send;
 $('txt').addEventListener('keydown',e=>{if(e.key==='Enter')send();});
+/* ── تنبيه صوتي ── */
+let soundOn=true; try{soundOn=localStorage.getItem('hsaSound')!=='0';}catch(e){}
+let actx=null, lastUnread=null;
+$('bell').textContent=soundOn?'🔔':'🔕';
+$('bell').onclick=()=>{
+  soundOn=!soundOn;
+  $('bell').textContent=soundOn?'🔔':'🔕';
+  try{localStorage.setItem('hsaSound',soundOn?'1':'0');}catch(e){}
+  if(soundOn)chime();
+};
+/* المتصفح يمنع الصوت قبل أول لمسة — نفكّه بأول تفاعل */
+['click','keydown','touchstart'].forEach(ev=>addEventListener(ev,function unlock(){
+  try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();if(actx.state==='suspended')actx.resume();}catch(e){}
+  removeEventListener(ev,unlock);
+},{once:true}));
+
+function chime(){
+  if(!soundOn)return;
+  try{
+    actx=actx||new (window.AudioContext||window.webkitAudioContext)();
+    if(actx.state==='suspended')actx.resume();
+    const t=actx.currentTime;
+    /* نغمتين ناعمتين — مثل جرس خفيف، مو إزعاج */
+    [[880,0,0.22],[1318.51,0.11,0.18]].forEach(([f,d,v])=>{
+      const o=actx.createOscillator(), g=actx.createGain();
+      o.type='sine'; o.frequency.value=f;
+      g.gain.setValueAtTime(0,t+d);
+      g.gain.linearRampToValueAtTime(v,t+d+0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+d+0.55);
+      o.connect(g); g.connect(actx.destination);
+      o.start(t+d); o.stop(t+d+0.6);
+    });
+  }catch(e){}
+}
+
+function onCounts(total){
+  /* أول تحميل ما ينبّه — بس الزيادة الجديدة */
+  if(lastUnread!==null && total>lastUnread){
+    chime();
+    try{
+      if(!document.hasFocus() && Notification && Notification.permission==='granted')
+        new Notification('رسالة جديدة — إنبوكس هسة',{body:'عندك '+total+' رسالة غير مقروءة'});
+    }catch(e){}
+  }
+  lastUnread=total;
+  document.title=(total?'('+total+') ':'')+'إنبوكس هسة';
+}
+try{ if(window.Notification && Notification.permission==='default')
+  $('bell').addEventListener('click',()=>Notification.requestPermission(),{once:true}); }catch(e){}
+
 loadList();setInterval(()=>{loadList();if(cur&&document.hasFocus())open_(cur);},5000);
 </script></body></html>`;
 
