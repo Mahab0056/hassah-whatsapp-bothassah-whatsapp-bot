@@ -99,10 +99,20 @@ function sendList(to, { body, footer, header, button, title, rows }) {
 }
 
 /* ---------- علامة "مقروء" ---------- */
-function markRead(messageId) {
-  return call('/messages', { messaging_product: 'whatsapp', status: 'read', message_id: messageId })
-    .catch(() => {}); // مو مهم إذا فشلت
+function markRead(messageId, typing = true) {
+  const body = { messaging_product: 'whatsapp', status: 'read', message_id: messageId };
+  if (typing) body.typing_indicator = { type: 'text' };
+  return call('/messages', body).catch(() => {
+    if (!typing) return;
+    return call('/messages', {
+      messaging_product: 'whatsapp', status: 'read', message_id: messageId,
+    }).catch(() => {});
+  });
 }
+
+/** وقفة قصيرة قبل الرد — طول الرد يحدد الوقت، بحدود 0.6 لـ 2.2 ثانية */
+const humanPause = (text = '') => new Promise((r) =>
+  setTimeout(r, Math.min(2200, 600 + String(text).length * 12)));
 
 /* ================================================================
    إرسال رمز التحقق (OTP)
@@ -146,4 +156,4 @@ function sendTemplate(to, templateName, params = [], lang = 'ar') {
   });
 }
 
-module.exports = { sendText, sendButtons, sendList, markRead, sendOtp, sendTemplate };
+module.exports = { sendText, sendButtons, sendList, markRead, humanPause, sendOtp, sendTemplate };
