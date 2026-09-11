@@ -165,6 +165,23 @@ const setBotPaused = (phone, v) => { thread(phone).botPaused = !!v; };
 
 /* ═══════════════ التصنيف ═══════════════ */
 
+/* ── الرسايل الي تنعرض ──
+   خلل قديم كان يسجّل رد الموظف مرتين (مرة كـ"بوت" ومرة كـ"موظف").
+   ما نمسح ولا سجل من الملف — بس نعرض النسخة المكررة مرة وحدة. ═══ */
+function visible(msgs) {
+  const out = [];
+  for (const m of msgs) {
+    const p = out[out.length - 1];
+    if (p && p.dir === 'out' && m.dir === 'out' &&
+        p.text === m.text && Math.abs(m.at - p.at) < 15000) {
+      if (m.by === 'agent') out[out.length - 1] = m;   // نخلي نسخة الموظف
+      continue;
+    }
+    out.push(m);
+  }
+  return out;
+}
+
 function kindOf(t) {
   let k = 'unknown';
   for (const m of t.messages) {
@@ -191,10 +208,11 @@ function kindOf(t) {
 
 /** لكل رسالة واردة: شكد استغرق الرد عليها — نفصل رد الموظف عن رد البوت */
 function replyDeltas(t) {
+  const msgs = visible(t.messages);
   const agent = [], bot = [];
   let pendingAgent = null;   // أقدم واردة ما ردّ عليها موظف
   let pendingBot = null;     // آخر واردة ما ردّ عليها البوت
-  for (const m of t.messages) {
+  for (const m of msgs) {
     if (m.dir === 'in') {
       if (pendingAgent === null) pendingAgent = m.at;
       pendingBot = m.at;
@@ -214,7 +232,7 @@ function replyDeltas(t) {
     }
   }
   // "ينتظر رد" = آخر رسالة بالمحادثة واردة، يعني ماكو أي رد بعدها
-  const last = t.messages[t.messages.length - 1];
+  const last = msgs[msgs.length - 1];
   const stillWaiting = last && last.dir === 'in' ? last.at : null;
   return { agent, bot, stillWaiting };
 }
@@ -675,7 +693,7 @@ function mount(app, wa) {
     res.json({
       phone: t.phone, name: t.name, step: t.step, kind: kindOf(t),
       status: t.status, botPaused: t.botPaused,
-      lastInAt: lastIn ? lastIn.at : null, messages: t.messages,
+      lastInAt: lastIn ? lastIn.at : null, messages: visible(t.messages),
     });
   });
 
@@ -684,10 +702,10 @@ function mount(app, wa) {
     const { phone, text } = req.body || {};
     if (!phone || !text) return res.status(400).json({ error: 'phone و text مطلوبين' });
     try {
-      await wa.sendText(String(phone), String(text));
+      // wa.sendText تسجّلها بالإنبوكس بنفسها — ما نسجّلها مرة ثانية وإلا تنعرض مرتين
+      await wa.sendText(String(phone), String(text), true, 'agent');
       setBotPaused(phone, true);              // الموظف تدخّل → البوت يسكت
       setStatus(phone, 'open');               // وتنتقل تلقائياً لقيد المعالجة
-      record(phone, 'out', text, { by: 'agent' });
       res.json({ ok: true });
     } catch (e) {
       res.status(502).json({ error: e.details?.error?.message || e.message });
