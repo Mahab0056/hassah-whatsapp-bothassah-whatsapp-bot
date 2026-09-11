@@ -11,7 +11,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const FILE = path.join(__dirname, 'leads.jsonl');
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+const FILE = path.join(DATA_DIR, 'leads.jsonl');
 const WEBHOOK = process.env.LEADS_WEBHOOK_URL;
 const NOTIFY = (process.env.TEAM_NOTIFY_NUMBERS || '')
   .split(',').map((s) => s.trim()).filter(Boolean);
