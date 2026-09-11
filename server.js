@@ -323,7 +323,13 @@ app.post('/webhook', async (req, res) => {
         if (!value.messages) continue;
 
         for (const msg of value.messages) {
-          const phone = msg.from;                       // بصيغة 9647XXXXXXXXX
+          /* بعض الرسايل (خصوصاً الجاية من إعلانات CTWA) ما بيها msg.from —
+             نرجع لـ contacts[0].wa_id قبل ما نستسلم. بدون هذا الزبون ينضاع. */
+          const phone = msg.from || value.contacts?.[0]?.wa_id || msg.recipient_id;
+          if (!phone) {
+            console.error('[webhook] ⚠️ رسالة بلا رقم —', JSON.stringify(msg).slice(0, 400));
+            continue;
+          }
           wa.markRead(msg.id);
 
           const incoming = parseIncoming(msg);
