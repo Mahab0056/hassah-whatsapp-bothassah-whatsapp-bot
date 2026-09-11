@@ -15,7 +15,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const FILE = path.join(__dirname, 'inbox.jsonl');
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+const FILE = path.join(DATA_DIR, 'inbox.jsonl');
 const MAX_MSGS_PER_THREAD = 200;
 const MAX_THREADS = 2000;
 
@@ -33,6 +34,30 @@ function thread(phone) {
     }
   }
   return t;
+}
+
+/* ── استرجاع المحادثات من القرص عند الإقلاع ──
+   بدونها كل نشر جديد يمسح الإنبوكس. ═══ */
+function loadFromDisk() {
+  let n = 0;
+  try {
+    if (!fs.existsSync(FILE)) return;
+    const lines = fs.readFileSync(FILE, 'utf8').split('\n');
+    /* نقرأ آخر 20 ألف سطر كحد أقصى حتى ما نثقل الذاكرة */
+    for (const line of lines.slice(-20000)) {
+      if (!line.trim()) continue;
+      let r; try { r = JSON.parse(line); } catch { continue; }
+      if (!r.phone || !r.dir) continue;
+      const t = thread(r.phone);
+      t.messages.push(r);
+      if (t.messages.length > MAX_MSGS_PER_THREAD) t.messages.shift();
+      if (r.at > t.lastAt) t.lastAt = r.at;
+      n++;
+    }
+    console.log(`[inbox] ♻️  استرجعنا ${n} رسالة من ${threads.size} محادثة`);
+  } catch (e) {
+    console.error('[inbox] فشل الاسترجاع:', e.message);
+  }
 }
 
 function appendFile(rec) {
@@ -297,5 +322,7 @@ function mount(app, wa) {
     res.json({ ok: true, botPaused: !!paused });
   });
 }
+
+loadFromDisk();
 
 module.exports = { record, setStep, markSeen, isBotPaused, setBotPaused, list, get, mount };
