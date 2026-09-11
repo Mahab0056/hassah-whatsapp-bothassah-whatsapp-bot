@@ -1,0 +1,5 @@
+node_modules/
+.env
+*.jsonl
+.token.tmp
+!recovered.jsonl
