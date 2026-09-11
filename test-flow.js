@@ -18,6 +18,7 @@ const { handle, parseIncoming } = require('./server.js');
 const txt  = (t)  => ({ type: 'text', text: { body: t } });
 const btn  = (id) => ({ type: 'interactive', interactive: { type: 'button_reply', button_reply: { id, title: id } } });
 const row  = (id) => ({ type: 'interactive', interactive: { type: 'list_reply',   list_reply:   { id, title: id } } });
+const loc  = (lat, lng, name, address) => ({ type: 'location', location: { latitude: lat, longitude: lng, name, address } });
 
 async function run(name, phone, steps) {
   out.length = 0;
@@ -35,16 +36,35 @@ async function run(name, phone, steps) {
   let fails = 0;
   const ok = (c, m) => { console.log(`  ${c ? '✅' : '❌'} ${m}`); if (!c) fails++; };
 
-  r = await run('متجر — مسار كامل', '9647801111111', [
+  r = await run('متجر — مسار كامل مع لوكيشن', '9647801111111', [
     txt('السلام عليكم'), btn('MENU_STORE'), txt('سوبرماركت النور'),
-    row('CAT_GROCERY'), txt('الكرادة'), row('DAY_TMRW'), btn('TIME_PM'),
+    row('CAT_GROCERY'), btn('PH_SHOOT'), row('DAY_TMRW'), btn('TIME_PM'),
+    loc(33.315, 44.366, 'سوبرماركت النور', 'الكرادة داخل'),
   ]);
   const lead = r.find(x => x.k === 'LEAD');
   ok(lead && lead.lead.type === 'store', 'انحفظ ليد متجر');
   ok(lead && lead.lead.storeName === 'سوبرماركت النور', 'اسم المتجر صحيح');
   ok(lead && lead.lead.categoryLabel === 'مواد غذائية', 'النوع صحيح');
-  ok(lead && lead.lead.area === 'الكرادة', 'المنطقة صحيحة');
+  ok(lead && lead.lead.photoModeLabel === 'يريد تصوير', 'وضع الصور صحيح');
+  ok(lead && lead.lead.mapUrl && lead.lead.mapUrl.includes('33.315'), 'اللوكيشن انحفظ');
   ok(lead && lead.lead.phone === '9647801111111', 'الرقم انحفظ');
+
+  r = await run('متجر عنده صور — يتخطى موعد التصوير', '9647801111112', [
+    txt('هلو'), btn('MENU_STORE'), txt('بوتيك الأناقة'),
+    row('CAT_FASHION'), btn('PH_HAVE'),
+    txt('المنصور - شارع الأميرات - مقابل مطعم السرايا'),
+  ]);
+  const ls = r.find(x => x.k === 'LEAD');
+  ok(ls && ls.lead.photoModeLabel === 'عنده صور جاهزة', 'قبل المتجر الي عنده صور');
+  ok(ls && !ls.lead.photoDayLabel, 'ما سأل عن موعد تصوير');
+  ok(ls && ls.lead.locationText.includes('المنصور'), 'خزن العنوان المكتوب');
+
+  r = await run('متجر — عنوان قصير يعيد السؤال', '9647801111113', [
+    txt('هلو'), btn('MENU_STORE'), txt('محل الوفاء'),
+    row('CAT_HOME'), btn('PH_HAVE'), txt('زيونة'),
+  ]);
+  ok(!r.some(x => x.k === 'LEAD'), 'ما قبل عنوان ناقص');
+  ok(r[r.length - 1].b.includes('لوكيشن'), 'طلب الموقع مرة ثانية');
 
   r = await run('مندوب — مسار كامل', '9647802222222', [
     txt('هلو'), btn('MENU_COURIER'), txt('علي حسن محمد'),
@@ -83,7 +103,7 @@ async function run(name, phone, steps) {
   ok(r.some(x => x.k === 'text' && x.b.includes('2,000') && x.b.includes('3,000')), 'ذكر حصة المندوب');
 
   r = await run('المتجر يشوف التصوير المجاني', '9647804444443', [ txt('هلو'), btn('MENU_STORE') ]);
-  ok(r.some(x => x.k === 'text' && x.b.includes('تصوير منتجاتك مجاناً')), 'ذكر التصوير المجاني');
+  ok(r.some(x => x.k === 'text' && x.b.includes('التصوير')), 'ذكر التصوير المجاني');
 
   r = await run('زبون — تتبع طلب', '9647804444444', [
     txt('هاي'), btn('MENU_CUSTOMER'), btn('CUS_ORDER'), txt('HSA-99231'),
