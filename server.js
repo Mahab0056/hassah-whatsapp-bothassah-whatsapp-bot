@@ -591,17 +591,33 @@ app.get('/templates', async (req, res) => {
   }
 });
 
-app.post('/templates', async (req, res) => {
+function adminOk(req) {
   const auth = req.get('authorization') || '';
-  if (process.env.INTERNAL_TOKEN && auth !== `Bearer ${process.env.INTERNAL_TOKEN}`) {
-    return res.status(401).json({ ok: false, error: 'unauthorized' });
-  }
+  const byToken = process.env.INTERNAL_TOKEN && auth === `Bearer ${process.env.INTERNAL_TOKEN}`;
+  const key = req.query.key || req.body?.key;
+  const byInbox = process.env.INBOX_KEY && key === process.env.INBOX_KEY;
+  return !!(byToken || byInbox);
+}
+
+app.post('/templates', async (req, res) => {
+  if (!adminOk(req)) return res.status(401).json({ ok: false, error: 'unauthorized' });
   try {
     const out = await wa.createTemplate(req.body || {});
     console.log('[tpl] ✅ انچلق قالب', JSON.stringify(out).slice(0, 300));
     res.json({ ok: true, result: out });
   } catch (e) {
     console.error('[tpl] ❌ فشل الإنشاء', JSON.stringify(e.details || e.message).slice(0, 400));
+    res.status(e.status || 502).json({ ok: false, error: e.message, details: e.details });
+  }
+});
+
+app.delete('/templates/:name', async (req, res) => {
+  if (!adminOk(req)) return res.status(401).json({ ok: false, error: 'unauthorized' });
+  try {
+    const out = await wa.deleteTemplate(req.params.name);
+    console.log('[tpl] 🗑️  انمسح قالب', req.params.name);
+    res.json({ ok: true, result: out });
+  } catch (e) {
     res.status(e.status || 502).json({ ok: false, error: e.message, details: e.details });
   }
 });
