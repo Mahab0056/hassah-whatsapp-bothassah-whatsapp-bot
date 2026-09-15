@@ -123,7 +123,7 @@ const humanPause = (text = '') => new Promise((r) =>
    إرسال رمز التحقق (OTP)
    يستخدم تمبلت hassah_otp — يناديه سيرفر هسه، مو البوت
    ================================================================ */
-function sendOtp(to, code, templateName = process.env.OTP_TEMPLATE || 'hassah_otp', lang = 'ar') {
+function sendOtp(to, code, templateName = process.env.OTP_TEMPLATE || 'hassah_otp', lang = process.env.OTP_LANG || 'ar') {
   return send({
     ...rcpt(to),
     to,
@@ -144,7 +144,7 @@ function sendOtp(to, code, templateName = process.env.OTP_TEMPLATE || 'hassah_ot
    إرسال أي تمبلت معتمد — للإشعارات (تأكيد طلب، بالطريق، تم التسليم...)
    params: مصفوفة نصوص تنعبى بمكان {{1}} {{2}} ... بترتيبها
    ================================================================ */
-function sendTemplate(to, templateName, params = [], lang = 'ar') {
+function sendTemplate(to, templateName, params = [], lang = process.env.TEMPLATE_LANG || 'ar') {
   const components = [];
   if (params.length) {
     components.push({
