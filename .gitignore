@@ -3,3 +3,4 @@ node_modules/
 *.jsonl
 .token.tmp
 !recovered.jsonl
+.recovered
