@@ -27,18 +27,46 @@ const PRICING = {
    روابط التطبيقات
    ================================================================ */
 const APPS = {
-  customerIos: 'https://apps.apple.com/app/id6757367057',
-  courierIos:  'https://apps.apple.com/app/id6757434684',
-  courierAndroid: 'https://play.google.com/store/apps/details?id=app.technolanes.hassamandoub',
-  storeIos:    'https://apps.apple.com/app/id6757677233',
-  website:     'https://hassamarket.live',
+  customerIos:     'https://apps.apple.com/app/id6757367057',
+  customerAndroid: 'https://play.google.com/store/apps/details?id=app.technolanes.hassah',
+  courierIos:      'https://apps.apple.com/app/id6757434684',
+  courierAndroid:  'https://play.google.com/store/apps/details?id=app.technolanes.hassamandoub',
+  storeIos:        'https://apps.apple.com/app/id6757677233',
+  storeAndroid:    '',   // ← لمن ينزل على Google Play حطه هنا وخلص
+  website:         'https://hassamarket.live',
 };
+
+/* ── أزرار اختيار نوع الجهاز ──
+   ما ننطي رابطين ونخلي الزبون يدور على مالته — نسأل ونعطي الصح. */
+const DEVICE_BUTTONS = [
+  { id: 'DEV_IOS',     title: '🍏 آيفون' },
+  { id: 'DEV_ANDROID', title: '🤖 أندرويد' },
+];
+
+const askDevice = (what) => `جهازك آيفون لو أندرويد؟\n\nحتى أنطيك رابط ${what} الصح مباشرة.`;
+
+/* يرجّع الرابط حسب الجهاز، وإذا ما كو رابط لهذا النظام يرجّع null */
+function appLink(kind, device) {
+  const map = {
+    customer: { DEV_IOS: APPS.customerIos, DEV_ANDROID: APPS.customerAndroid },
+    courier:  { DEV_IOS: APPS.courierIos,  DEV_ANDROID: APPS.courierAndroid },
+    store:    { DEV_IOS: APPS.storeIos,    DEV_ANDROID: APPS.storeAndroid },
+  };
+  return (map[kind] && map[kind][device]) || null;
+}
+
+const NOT_READY = {
+  customer: `تطبيق الزبون للأندرويد قيد النشر — تگدر تتسوق من الموقع لهسه:\n${'https://hassamarket.live'}`,
+  courier:  `تطبيق المندوب لهذا النظام قيد النشر — راسلنا هنا وإحنا نمشّيك.`,
+  store:    `تطبيق التاجر للأندرويد قيد النشر — فريقنا راح يسجّل متجرك يدوياً لحد ما ينزل، ما راح تتأخر.`,
+};
+
 
 const APP_LINKS = {
   customer:
     `📱 *تطبيق ${BRAND} للزبائن*\n\n` +
     `آيفون: ${APPS.customerIos}\n\n` +
-    `أندرويد: التطبيق قيد النشر على Google Play — لحد ما ينزل، راسلنا هنا وناخذ طلبك مباشرة.\n\n` +
+    `أندرويد: ${APPS.customerAndroid}\n\n` +
     `أو تصفح من الموقع: ${APPS.website}`,
 
   courier:
@@ -49,12 +77,14 @@ const APP_LINKS = {
   store:
     `📱 *تطبيق ${BRAND} التاجر*\n\n` +
     `آيفون: ${APPS.storeIos}\n\n` +
-    `أندرويد: قيد النشر — فريقنا راح يسجّل متجرك يدوياً لحد ما ينزل.`,
+    (APPS.storeAndroid
+      ? `أندرويد: ${APPS.storeAndroid}`
+      : `أندرويد: قيد النشر — فريقنا راح يسجّل متجرك يدوياً لحد ما ينزل.`),
 
   all:
     `📱 *تطبيقات ${BRAND}*\n\n` +
-    `🛒 *للزبائن* — تتسوق وتتابع طلبك\n${APPS.customerIos}\n\n` +
-    `🛵 *للمندوبين* — تستلم التوصيلات وتحاسب\n${APPS.courierAndroid}\n\n` +
+    `🛒 *للزبائن* — تتسوق وتتابع طلبك\nآيفون: ${APPS.customerIos}\nأندرويد: ${APPS.customerAndroid}\n\n` +
+    `🛵 *للمندوبين* — تستلم التوصيلات وتحاسب\nآيفون: ${APPS.courierIos}\nأندرويد: ${APPS.courierAndroid}\n\n` +
     `🏪 *للتجار* — تدير منتجاتك وطلباتك\n${APPS.storeIos}\n\n` +
     `الموقع: ${APPS.website}`,
 };
@@ -222,8 +252,7 @@ const COURIER = {
     `🚙 *المركبة:* ${d.vehicleLabel}\n` +
     `📍 *المنطقة:* ${d.area}\n\n` +
     `فريق التوظيف راح يتصل بيك خلال *48 ساعة*.\n\n` +
-    `جهّز *هويتك* و*سنوية المركبة* للمقابلة 📄\n\n` +
-    `ومن هسه نزّل تطبيق المندوب:\n${APPS.courierAndroid}`,
+    `جهّز *هويتك* و*سنوية المركبة* للمقابلة 📄`,
 };
 
 /* ================================================================
@@ -359,10 +388,13 @@ const LABELS = {
   DAY_WEEK: 'خلال هالأسبوع', DAY_NEXT: 'الأسبوع الجاي',
 
   TIME_AM: 'صباحاً 9–12', TIME_PM: 'ظهراً 12–4', TIME_EVE: 'مساءً 4–9',
+
+  DEV_IOS: 'آيفون', DEV_ANDROID: 'أندرويد',
 };
 
 module.exports = {
   pick, greeting, ACKS, THANKS,
   BRAND, PRICING, APPS, APP_LINKS, APP_KEYWORDS,
   MAIN_MENU, STORE, COURIER, CUSTOMER, COMMON, SETTINGS, LABELS,
+  DEVICE_BUTTONS, askDevice, appLink, NOT_READY,
 };

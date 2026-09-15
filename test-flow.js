@@ -96,8 +96,23 @@ async function run(name, phone, steps) {
   ok(r.some(x => x.k === 'text' && x.b.includes('أجرة التوصيل')), 'جاوب على سؤال الأجور');
   ok(r.some(x => x.k === 'text' && x.b.includes('5,000')), 'ذكر سعر التوصيل 5,000');
 
-  r = await run('كلمة "تطبيق" ترسل الروابط', '9647804444441', [ txt('تطبيق') ]);
-  ok(r.some(x => x.k === 'text' && x.b.includes('apps.apple.com')), 'أرسل روابط التطبيقات');
+  r = await run('كلمة "تطبيق" تسأل عن الجهاز', '9647804444441', [ txt('تطبيق') ]);
+  ok(r.some(x => x.k === 'buttons' && x.ids.includes('DEV_IOS') && x.ids.includes('DEV_ANDROID')),
+     'سأل آيفون لو أندرويد بدل ما يدز رابطين');
+
+  r = await run('آيفون → رابط App Store', '9647804444451', [ txt('تطبيق'), btn('DEV_IOS') ]);
+  ok(r.some(x => x.k === 'text' && x.b.includes('apps.apple.com/app/id6757367057')), 'أرسل رابط آيفون الصح');
+  ok(!r.some(x => x.k === 'text' && x.b.includes('play.google.com')), 'ما أرسل رابط أندرويد');
+
+  r = await run('أندرويد → رابط Google Play', '9647804444452', [ txt('تطبيق'), btn('DEV_ANDROID') ]);
+  ok(r.some(x => x.k === 'text' && x.b.includes('id=app.technolanes.hassah')), 'أرسل رابط أندرويد الصح');
+  ok(!r.some(x => x.k === 'text' && x.b.includes('قيد النشر')), 'ما گال «قيد النشر» — التطبيق منشور فعلاً');
+
+  r = await run('المندوب يخلص → ينسأل عن جهازه', '9647804444453', [
+    txt('هلو'), btn('MENU_COURIER'), txt('علي حسن'), btn('BIKE_YES'), txt('زيونة'), btn('DEV_IOS'),
+  ]);
+  ok(r.some(x => x.k === 'text' && x.b.includes('id6757434684')), 'أرسل تطبيق المندوب آيفون');
+
 
   r = await run('المندوب يشوف حصته', '9647804444442', [ txt('هلو'), btn('MENU_COURIER') ]);
   ok(r.some(x => x.k === 'text' && x.b.includes('2,000') && x.b.includes('3,000')), 'ذكر حصة المندوب');

@@ -87,6 +87,27 @@ const isRestart = (t) => ['0', 'رجوع', 'القائمة', 'البداية', '
 /* ═══════════════ منطق المحادثة ═══════════════ */
 
 
+/* نسأل عن نوع الجهاز بدل ما ندز رابطين ونخلي الزبون يدور على مالته.
+   kind: 'customer' | 'courier' | 'store' */
+function askDevice(phone, kind, what) {
+  const s = getSession(phone);
+  s.step = 'DEVICE';
+  s.data = { ...(s.data || {}), deviceFor: kind };
+  return wa.sendButtons(phone, {
+    body: F.askDevice(what), buttons: F.DEVICE_BUTTONS,
+  });
+}
+
+/* ينطي الرابط الصح، وإذا التطبيق مو منشور لهذا النظام يوضّح بصدق */
+async function sendAppLink(phone, kind, device) {
+  const url = F.appLink(kind, device);
+  const label = { customer: 'تطبيق الزبون', courier: 'تطبيق المندوب', store: 'تطبيق التاجر' }[kind];
+  if (url) await wa.sendText(phone, `📱 *${label}* — ${F.LABELS[device]}\n\n${url}`);
+  else await wa.sendText(phone, F.NOT_READY[kind]);
+  clearSession(phone);
+}
+
+
 /* ═══════════════ طبقة الذكاء ═══════════════
    تنادى لمن الزبون يكتب شي برّا السيناريو. إذا الذكاء مو مفعّل أو فشل،
    نرجع false والمنادي يستعمل الرد الثابت القديم — يعني ما ننكسر أبداً.
@@ -166,7 +187,7 @@ async function handle(phone, incoming) {
   if (text && s.step !== 'AGENT') {
     const t = text.toLowerCase().trim();
     if (F.APP_KEYWORDS.some((k) => t === k || t.startsWith(k + ' ') || t.endsWith(' ' + k))) {
-      return wa.sendText(phone, F.COMMON.apps);
+      return askDevice(phone, 'customer', 'التطبيق');
     }
   }
 
@@ -320,9 +341,11 @@ async function handle(phone, incoming) {
       }
       await leads.save({ type: 'store', phone, ...s.data }, wa);
       const doneMsg = F.STORE.done(s.data);
+      const sName = s.name;
       clearSession(phone);
+      getSession(phone).name = sName;
       await wa.sendText(phone, doneMsg);
-      return wa.sendText(phone, F.APP_LINKS.store);
+      return askDevice(phone, 'store', 'تطبيق التاجر');
     }
 
     /* ─────────── مسار المندوب ─────────── */
@@ -369,8 +392,12 @@ async function handle(phone, incoming) {
         { resumeText: F.COURIER.askArea })) return;
       s.data.area = text.slice(0, 120);
       await leads.save({ type: 'courier', status: 'ready', phone, ...s.data }, wa);
+      const courierDone = F.COURIER.done(s.data);
+      const cName = s.name;
       clearSession(phone);
-      return wa.sendText(phone, F.COURIER.done(s.data));
+      getSession(phone).name = cName;
+      await wa.sendText(phone, courierDone);
+      return askDevice(phone, 'courier', 'تطبيق المندوب');
     }
 
     /* ─────────── مسار الزبون ─────────── */
@@ -438,6 +465,18 @@ async function handle(phone, incoming) {
           { id: 'BACK_MENU', title: '🔙 القائمة' },
         ],
       }).then(() => { s.step = 'CUSTOMER_MENU'; });
+    }
+
+    /* ─────────── نوع الجهاز → الرابط الصح ─────────── */
+    case 'DEVICE': {
+      const kind = s.data?.deviceFor || 'customer';
+      if (id !== 'DEV_IOS' && id !== 'DEV_ANDROID') {
+        const what = { customer: 'التطبيق', courier: 'تطبيق المندوب', store: 'تطبيق التاجر' }[kind];
+        if (text && await aiReply(phone, 'انسأل عن نوع جهازه (آيفون/أندرويد) وكتب كلام حر.',
+          { onQuestionResume: () => askDevice(phone, kind, what) })) return;
+        return wa.sendButtons(phone, { body: F.askDevice(what), buttons: F.DEVICE_BUTTONS });
+      }
+      return sendAppLink(phone, kind, id);
     }
 
     /* ─────────── محوّل لموظف: البوت يسكت ─────────── */
