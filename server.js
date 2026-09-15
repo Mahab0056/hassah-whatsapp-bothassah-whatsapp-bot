@@ -15,6 +15,7 @@ const wa = require('./wa');
 const leads = require('./leads');
 const F = require('./flows');
 const inbox = require('./inbox');
+const optout = require('./optout');
 const ai = require('./ai');
 
 const app = express();
@@ -143,6 +144,13 @@ async function handle(phone, incoming) {
 
   // اسم الزبون من بروفايل واتساب — نستخدمه بالتحية حتى تحس بشرية
   if (incoming.name && !s.name) s.name = incoming.name;
+
+  // ── طلب إيقاف الرسائل التسويقية ──
+  // يجي إما كنص، أو كضغطة زر «إيقاف الرسائل» بالقالب التسويقي.
+  if (optout.isStop(text) || optout.isStop(id)) {
+    optout.add(phone, id ? 'button' : 'keyword');
+    return wa.sendText(phone, optout.CONFIRM);
+  }
 
   // "0" أو أي كلمة رجوع → القائمة الرئيسية
   if (isRestart(text)) {
@@ -562,6 +570,12 @@ app.post('/send-template', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'الرقم لازم يكون بصيغة 9647XXXXXXXXX' });
   }
 
+  // ما ندز تسويق لواحد طلب إيقاف — هذا يحمي تقييم الجودة
+  if (optout.has(to)) {
+    console.log(`[tpl] ⏭️  +${to} بقائمة الإيقاف`);
+    return res.json({ ok: false, skipped: 'opted_out' });
+  }
+
   try {
     const r = await wa.sendTemplate(to, template, params, lang);
     console.log(`[tpl] ✅ ${template} → +${to}`);
@@ -570,6 +584,63 @@ app.post('/send-template', async (req, res) => {
     console.error(`[tpl] ❌ ${template} → +${to}`, e.details || e.message);
     res.status(502).json({ ok: false, error: 'فشل الإرسال', details: e.details });
   }
+});
+
+/* ═══════════════ حملة تسويقية ═══════════════
+   POST /campaign
+   { "template":"hassah_comeback_ar", "phones":["9647801234567", ...],
+     "lang":"ar", "params":[], "dryRun":true }
+   Header: Authorization: Bearer <INTERNAL_TOKEN>
+
+   - يشيل المكرر وقائمة الإيقاف والأرقام الخربانة قبل ما يدز
+   - يدز بتمهّل (ثانية بين رسالة وأخرى) حتى ما نبان سبام
+   - dryRun:true يرجّع شنو راح يصير بدون ما يدز ولا رسالة
+   ═══════════════════════════════════════════ */
+app.post('/campaign', async (req, res) => {
+  const auth = req.get('authorization') || '';
+  if (process.env.INTERNAL_TOKEN && auth !== `Bearer ${process.env.INTERNAL_TOKEN}`) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+
+  const { template, phones = [], params = [], lang = 'ar', dryRun = false } = req.body || {};
+  if (!template || !Array.isArray(phones) || !phones.length) {
+    return res.status(400).json({ ok: false, error: 'template و phones مطلوبين' });
+  }
+  if (phones.length > 500) {
+    return res.status(400).json({ ok: false, error: 'أقصى 500 رقم بالدفعة الوحدة' });
+  }
+
+  const seen = new Set();
+  const valid = [], invalid = [], skipped = [];
+  for (const raw of phones) {
+    const to = optout.norm(raw);
+    if (!/^964\d{9,10}$/.test(to)) { invalid.push(raw); continue; }
+    if (seen.has(to)) continue;
+    seen.add(to);
+    if (optout.has(to)) { skipped.push(to); continue; }
+    valid.push(to);
+  }
+
+  if (dryRun) {
+    return res.json({ ok: true, dryRun: true, willSend: valid.length,
+      optedOut: skipped.length, invalid, sample: valid.slice(0, 3) });
+  }
+
+  console.log(`[campaign] ▶️  ${template} → ${valid.length} رقم`);
+  const sent = [], failed = [];
+  for (const to of valid) {
+    try {
+      const r = await wa.sendTemplate(to, template, params, lang);
+      sent.push({ to, messageId: r?.messages?.[0]?.id });
+    } catch (e) {
+      failed.push({ to, error: e.details || e.message });
+    }
+    await new Promise((r) => setTimeout(r, 1000));   // تمهّل
+  }
+  console.log(`[campaign] ✅ نجح ${sent.length} · فشل ${failed.length}`);
+  res.json({ ok: true, sent: sent.length, failed: failed.length,
+             optedOut: skipped.length, invalid: invalid.length,
+             failures: failed.slice(0, 10) });
 });
 
 /* ═══════════════ تشخيص القوالب ═══════════════
@@ -627,7 +698,8 @@ inbox.mount(app, wa);
 
 /* ═══════════════ صحة السيرفر ═══════════════ */
 app.get('/health', (_, res) =>
-  res.json({ ok: true, sessions: sessions.size, workingHours: isWorkingHours() }));
+  res.json({ ok: true, sessions: sessions.size, workingHours: isWorkingHours(),
+             optedOut: optout.count() }));
 
 const PORT = process.env.PORT || 3000;
 if (require.main === module) {
