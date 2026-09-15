@@ -44,6 +44,26 @@ const rcpt = (to) => (isUserId(to) ? {} : { recipient_type: 'individual' });
 
 const send = (payload) => call('/messages', { messaging_product: 'whatsapp', ...payload });
 
+/* ---------- إدارة القوالب (Templates) ----------
+   نستعملها حتى نعرف بالضبط شنو القوالب الموجودة بالـWABA
+   الي المفتاح يخدمها — بدون تخمين بين حسابات متشابهة الاسم. */
+async function api(method, path, body) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', 'D360-API-KEY': API_KEY },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const text = await res.text();
+  let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
+  if (!res.ok) { const e = new Error(`360dialog ${res.status}`); e.details = json; e.status = res.status; throw e; }
+  return json;
+}
+
+const listTemplates  = () => api('GET', '/v1/configs/templates');
+const createTemplate = (t) => api('POST', '/v1/configs/templates', t);
+const deleteTemplate = (n) => api('DELETE', `/v1/configs/templates/${encodeURIComponent(n)}`);
+const phoneNumbers   = () => api('GET', '/v1/configs/phone_numbers');
+
 /* ---------- رسالة نصية ---------- */
 function sendText(to, body, preview = true, by = 'bot') {
   logOut(to, body, by);
@@ -161,4 +181,7 @@ function sendTemplate(to, templateName, params = [], lang = process.env.TEMPLATE
   });
 }
 
-module.exports = { sendText, sendButtons, sendList, markRead, humanPause, sendOtp, sendTemplate };
+module.exports = {
+  sendText, sendButtons, sendList, markRead, humanPause, sendOtp, sendTemplate,
+  listTemplates, createTemplate, deleteTemplate, phoneNumbers,
+};

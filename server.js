@@ -572,6 +572,40 @@ app.post('/send-template', async (req, res) => {
   }
 });
 
+/* ═══════════════ تشخيص القوالب ═══════════════
+   GET  /templates → شنو القوالب الموجودة فعلاً بالـWABA مال المفتاح
+   POST /templates → إنشاء قالب بنفس الحساب (محمي بـINTERNAL_TOKEN)
+   ═════════════════════════════════════════════ */
+app.get('/templates', async (req, res) => {
+  try {
+    const [tpl, nums] = await Promise.all([
+      wa.listTemplates().catch((e) => ({ error: e.details || e.message })),
+      wa.phoneNumbers().catch((e) => ({ error: e.details || e.message })),
+    ]);
+    const list = (tpl.waba_templates || tpl.data || []).map((t) => ({
+      name: t.name, lang: t.language, cat: t.category, status: t.status,
+    }));
+    res.json({ ok: true, count: list.length, templates: list, phones: nums, raw: list.length ? undefined : tpl });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: e.message, details: e.details });
+  }
+});
+
+app.post('/templates', async (req, res) => {
+  const auth = req.get('authorization') || '';
+  if (process.env.INTERNAL_TOKEN && auth !== `Bearer ${process.env.INTERNAL_TOKEN}`) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+  try {
+    const out = await wa.createTemplate(req.body || {});
+    console.log('[tpl] ✅ انچلق قالب', JSON.stringify(out).slice(0, 300));
+    res.json({ ok: true, result: out });
+  } catch (e) {
+    console.error('[tpl] ❌ فشل الإنشاء', JSON.stringify(e.details || e.message).slice(0, 400));
+    res.status(e.status || 502).json({ ok: false, error: e.message, details: e.details });
+  }
+});
+
 /* ═══════════════ الإنبوكس ═══════════════ */
 inbox.mount(app, wa);
 
