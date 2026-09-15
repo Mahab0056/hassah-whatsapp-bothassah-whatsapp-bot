@@ -15,6 +15,7 @@ const wa = require('./wa');
 const leads = require('./leads');
 const F = require('./flows');
 const inbox = require('./inbox');
+const ai = require('./ai');
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
@@ -84,6 +85,57 @@ const isRestart = (t) => ['0', 'رجوع', 'القائمة', 'البداية', '
 
 /* ═══════════════ منطق المحادثة ═══════════════ */
 
+
+/* ═══════════════ طبقة الذكاء ═══════════════
+   تنادى لمن الزبون يكتب شي برّا السيناريو. إذا الذكاء مو مفعّل أو فشل،
+   نرجع false والمنادي يستعمل الرد الثابت القديم — يعني ما ننكسر أبداً.
+   ═══════════════════════════════════════════ */
+async function aiReply(phone, situation, { onQuestionResume, resumeText } = {}) {
+  if (!ai.enabled) return false;
+
+  const t = inbox.get(phone);
+  const history = (t ? t.messages : [])
+    .filter((m) => !m.t && m.text)
+    .slice(-10)
+    .map((m) => ({ role: m.dir === 'in' ? 'user' : 'assistant', content: m.text }));
+
+  const out = await ai.think(history, situation);
+  if (!out) return false;
+
+  /* إذا عدنا نص نرجعه بيه للخطوة، ندمجه بنفس الرسالة —
+     رسالتين ورا بعض تخلي الكلام يبين آلي. */
+  const merge = resumeText && out.action === 'answer';
+  await wa.sendText(phone, merge ? `${out.reply}\n\n${resumeText}` : out.reply);
+
+  const s = getSession(phone);
+  switch (out.action) {
+    case 'menu':
+      clearSession(phone);
+      getSession(phone).name = s.name;
+      await showMenu(phone, s.name);
+      break;
+    case 'courier':
+      s.step = 'COURIER_NAME'; s.data = {};
+      await wa.sendText(phone, F.COURIER.intro);
+      await wa.sendText(phone, F.COURIER.askName);
+      break;
+    case 'store':
+      s.step = 'STORE_NAME'; s.data = {};
+      await wa.sendText(phone, F.STORE.intro);
+      await wa.sendText(phone, F.STORE.askName);
+      break;
+    case 'agent':
+      s.step = 'AGENT';
+      if (!isWorkingHours()) await wa.sendText(phone, F.COMMON.afterHours);
+      break;
+    default:
+      // جاوب سؤاله ونرجعه لنفس الخطوة الي كان بيها
+      if (!merge && onQuestionResume) await onQuestionResume();
+  }
+  inbox.setStep(phone, getSession(phone).step);
+  return true;
+}
+
 async function handle(phone, incoming) {
   const s = getSession(phone);
   const { text, id } = incoming;
@@ -134,12 +186,17 @@ async function handle(phone, incoming) {
         s.step = 'CUSTOMER_MENU';
         return wa.sendButtons(phone, { body: F.CUSTOMER.intro, buttons: F.CUSTOMER.buttons });
       }
+      if (await aiReply(phone, 'بالقائمة الرئيسية. كتب كلام حر بدل ما يضغط زر.',
+        { onQuestionResume: () => showMenu(phone, s.name) })) return;
       return wa.sendText(phone, F.COMMON.fallback);
     }
 
     /* ─────────── مسار المتجر ─────────── */
     case 'STORE_NAME': {
       if (!text || text.length < 2) return wa.sendText(phone, F.STORE.askName);
+      if (ai.looksLikeQuestion(text) && await aiReply(phone,
+        'بمسار تسجيل المتجر، بخطوة اسم المتجر. سأل سؤال بدل ما ينطي الاسم.',
+        { resumeText: F.STORE.askName })) return;
       s.data.storeName = text.slice(0, 120);
       s.step = 'STORE_CATEGORY';
       return wa.sendList(phone, {
@@ -152,12 +209,16 @@ async function handle(phone, incoming) {
 
     case 'STORE_CATEGORY': {
       if (!id || !F.LABELS[id]) {
-        return wa.sendList(phone, {
+        const askCategory = () => wa.sendList(phone, {
           body: F.STORE.askCategory,
           button: F.STORE.categoryList.button,
           title: F.STORE.categoryList.title,
           rows: F.STORE.categoryList.rows,
         });
+        if (text && await aiReply(phone,
+          'بمسار تسجيل المتجر، بخطوة اختيار نوع المتجر من القائمة. كتب كلام حر بدل ما يختار.',
+          { onQuestionResume: askCategory })) return;
+        return askCategory();
       }
       s.data.category = id;
       s.data.categoryLabel = F.LABELS[id];
@@ -169,9 +230,13 @@ async function handle(phone, incoming) {
 
     case 'STORE_PHOTOS': {
       if (!id || !F.LABELS[id]) {
-        return wa.sendButtons(phone, {
+        const askPhotos = () => wa.sendButtons(phone, {
           body: F.STORE.askPhotos, buttons: F.STORE.photoButtons,
         });
+        if (text && await aiReply(phone,
+          'بمسار تسجيل المتجر، بخطوة الصور (عنده صور جاهزة لو يريد تصوير). كتب كلام حر بدل ما يضغط زر.',
+          { onQuestionResume: askPhotos })) return;
+        return askPhotos();
       }
       s.data.photoMode = id;
       s.data.photoModeLabel = F.LABELS[id];
@@ -192,12 +257,16 @@ async function handle(phone, incoming) {
 
     case 'STORE_PHOTO_DAY': {
       if (!id || !F.LABELS[id]) {
-        return wa.sendList(phone, {
+        const askDay = () => wa.sendList(phone, {
           body: F.STORE.askPhotoDay,
           button: F.STORE.photoDayList.button,
           title: F.STORE.photoDayList.title,
           rows: F.STORE.photoDayList.rows,
         });
+        if (text && await aiReply(phone,
+          'بمسار تسجيل المتجر، بخطوة اختيار يوم التصوير من القائمة. كتب كلام حر بدل ما يختار.',
+          { onQuestionResume: askDay })) return;
+        return askDay();
       }
       s.data.photoDay = id;
       s.data.photoDayLabel = F.LABELS[id];
@@ -209,9 +278,13 @@ async function handle(phone, incoming) {
 
     case 'STORE_PHOTO_TIME': {
       if (!id || !F.LABELS[id]) {
-        return wa.sendButtons(phone, {
+        const askTime = () => wa.sendButtons(phone, {
           body: F.STORE.askPhotoTime, buttons: F.STORE.photoTimeButtons,
         });
+        if (text && await aiReply(phone,
+          'بمسار تسجيل المتجر، بخطوة وقت التصوير (صباحي/مسائي). كتب كلام حر بدل ما يضغط زر.',
+          { onQuestionResume: askTime })) return;
+        return askTime();
       }
       s.data.photoTime = id;
       s.data.photoTimeLabel = F.LABELS[id];
@@ -228,10 +301,13 @@ async function handle(phone, incoming) {
         s.data.mapUrl = `https://maps.google.com/?q=${l.lat},${l.lng}`;
         s.data.locationText = [l.name, l.address].filter(Boolean).join(' — ') || 'لوكيشن مدزوز 📍';
         s.data.area = s.data.locationText;
-      } else if (text && text.trim().length >= 8) {
+      } else if (text && text.trim().length >= 8 && !ai.looksLikeQuestion(text)) {
         s.data.locationText = text.slice(0, 300);
         s.data.area = s.data.locationText;
       } else {
+        if (text && await aiReply(phone,
+          'بمسار تسجيل المتجر، بآخر خطوة: عنوان المتجر أو لوكيشن. ما نطى عنوان واضح.',
+          { resumeText: F.STORE.locationHint })) return;
         return wa.sendText(phone, F.STORE.locationHint);
       }
       await leads.save({ type: 'store', phone, ...s.data }, wa);
@@ -244,6 +320,9 @@ async function handle(phone, incoming) {
     /* ─────────── مسار المندوب ─────────── */
     case 'COURIER_NAME': {
       if (!text || text.length < 2) return wa.sendText(phone, F.COURIER.askName);
+      if (ai.looksLikeQuestion(text) && await aiReply(phone,
+        'بمسار تسجيل المندوب، بخطوة الاسم. سأل سؤال بدل ما ينطي اسمه.',
+        { resumeText: F.COURIER.askName })) return;
       s.data.courierName = text.slice(0, 120);
       s.step = 'COURIER_BIKE';
       return wa.sendButtons(phone, {
@@ -253,9 +332,13 @@ async function handle(phone, incoming) {
 
     case 'COURIER_BIKE': {
       if (!id || !F.LABELS[id]) {
-        return wa.sendButtons(phone, {
+        const askBike = () => wa.sendButtons(phone, {
           body: F.COURIER.askBike, buttons: F.COURIER.bikeButtons,
         });
+        if (text && await aiReply(phone,
+          'بمسار تسجيل المندوب، بخطوة: عنده دراجة/سيارة لو لا. كتب كلام حر بدل ما يضغط زر.',
+          { onQuestionResume: askBike })) return;
+        return askBike();
       }
       s.data.vehicle = id;
       s.data.vehicleLabel = F.LABELS[id];
@@ -273,6 +356,9 @@ async function handle(phone, incoming) {
 
     case 'COURIER_AREA': {
       if (!text || text.length < 2) return wa.sendText(phone, F.COURIER.askArea);
+      if (ai.looksLikeQuestion(text) && await aiReply(phone,
+        'بمسار تسجيل المندوب، بخطوة المنطقة الي يشتغل بيها. سأل سؤال بدل ما ينطي المنطقة.',
+        { resumeText: F.COURIER.askArea })) return;
       s.data.area = text.slice(0, 120);
       await leads.save({ type: 'courier', status: 'ready', phone, ...s.data }, wa);
       clearSession(phone);
@@ -305,11 +391,16 @@ async function handle(phone, incoming) {
         if (!isWorkingHours()) await wa.sendText(phone, F.COMMON.afterHours);
         return;
       }
+      if (await aiReply(phone, 'بقائمة الزبون (متابعة طلب / أسئلة / موظف). كتب كلام حر بدل ما يضغط زر.',
+        { onQuestionResume: () => wa.sendButtons(phone, { body: F.CUSTOMER.intro, buttons: F.CUSTOMER.buttons }) })) return;
       return wa.sendText(phone, F.COMMON.fallback);
     }
 
     case 'CUSTOMER_ORDER_NO': {
       if (!text) return wa.sendText(phone, F.CUSTOMER.askOrderNo);
+      if (ai.looksLikeQuestion(text) && await aiReply(phone,
+        'بمسار متابعة الطلب، بخطوة رقم الطلب. سأل سؤال بدل ما ينطي الرقم.',
+        { resumeText: F.CUSTOMER.askOrderNo })) return;
       s.step = 'AGENT';
       await wa.sendText(phone, F.CUSTOMER.orderReceived(text.slice(0, 40)));
       if (!isWorkingHours()) await wa.sendText(phone, F.COMMON.afterHours);
@@ -319,12 +410,16 @@ async function handle(phone, incoming) {
     case 'CUSTOMER_FAQ': {
       const answer = F.CUSTOMER.faqAnswers[id];
       if (!answer) {
-        return wa.sendList(phone, {
+        const askFaq = () => wa.sendList(phone, {
           body: F.CUSTOMER.faqList.body,
           button: F.CUSTOMER.faqList.button,
           title: F.CUSTOMER.faqList.title,
           rows: F.CUSTOMER.faqList.rows,
         });
+        if (text && await aiReply(phone,
+          'بقائمة الأسئلة الشائعة. كتب سؤاله بنفسه بدل ما يختار من القائمة.',
+          { onQuestionResume: askFaq })) return;
+        return askFaq();
       }
       await wa.sendText(phone, answer);
       return wa.sendButtons(phone, {
