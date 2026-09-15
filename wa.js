@@ -37,12 +37,17 @@ async function call(path, body) {
   return json;
 }
 
+/* ميتا بدت ترسل هوية مستخدم بدل الرقم (مثل "IQ.2824...").
+   بهالحالة ما ننطي recipient_type لأن الـAPI يرفضه مع الهويات. */
+const isUserId = (to) => /[^0-9+]/.test(String(to));
+const rcpt = (to) => (isUserId(to) ? {} : { recipient_type: 'individual' });
+
 const send = (payload) => call('/messages', { messaging_product: 'whatsapp', ...payload });
 
 /* ---------- رسالة نصية ---------- */
 function sendText(to, body, preview = true, by = 'bot') {
   logOut(to, body, by);
-  return send({ recipient_type: 'individual', to, type: 'text',
+  return send({ ...rcpt(to), to, type: 'text',
     text: { body, preview_url: preview } });
 }
 
@@ -67,7 +72,7 @@ function sendButtons(to, { body, footer, header, buttons }) {
   };
   if (header) interactive.header = { type: 'text', text: header.slice(0, 60) };
   if (footer) interactive.footer = { text: footer.slice(0, 60) };
-  return send({ recipient_type: 'individual', to, type: 'interactive', interactive });
+  return send({ ...rcpt(to), to, type: 'interactive', interactive });
 }
 
 /* ---------- قائمة (١٠ صفوف كحد أقصى) ---------- */
@@ -95,7 +100,7 @@ function sendList(to, { body, footer, header, button, title, rows }) {
   };
   if (header) interactive.header = { type: 'text', text: header.slice(0, 60) };
   if (footer) interactive.footer = { text: footer.slice(0, 60) };
-  return send({ recipient_type: 'individual', to, type: 'interactive', interactive });
+  return send({ ...rcpt(to), to, type: 'interactive', interactive });
 }
 
 /* ---------- علامة "مقروء" ---------- */
@@ -120,7 +125,7 @@ const humanPause = (text = '') => new Promise((r) =>
    ================================================================ */
 function sendOtp(to, code, templateName = process.env.OTP_TEMPLATE || 'hassah_otp', lang = 'ar') {
   return send({
-    recipient_type: 'individual',
+    ...rcpt(to),
     to,
     type: 'template',
     template: {
@@ -149,7 +154,7 @@ function sendTemplate(to, templateName, params = [], lang = 'ar') {
   }
   logOut(to, `[تمبلت: ${templateName}] ${params.join(' · ')}`, 'system');
   return send({
-    recipient_type: 'individual',
+    ...rcpt(to),
     to,
     type: 'template',
     template: { name: templateName, language: { code: lang }, components },

@@ -372,9 +372,14 @@ app.post('/webhook', async (req, res) => {
         if (!value.messages) continue;
 
         for (const msg of value.messages) {
-          /* بعض الرسايل (خصوصاً الجاية من إعلانات CTWA) ما بيها msg.from —
-             نرجع لـ contacts[0].wa_id قبل ما نستسلم. بدون هذا الزبون ينضاع. */
-          const phone = msg.from || value.contacts?.[0]?.wa_id || msg.recipient_id;
+          /* بعض الرسايل (خصوصاً الجاية من إعلانات CTWA) ما بيها msg.from.
+             ميتا بدت تدز هوية واتساب الجديدة بـ from_user_id (مثل "IQ.2824...")
+             بدل الرقم. نجرب كل الاحتمالات قبل ما نستسلم — بدون هذا الزبون ينضاع. */
+          const phone = msg.from
+            || value.contacts?.[0]?.wa_id
+            || msg.from_user_id
+            || value.contacts?.[0]?.user_id
+            || msg.recipient_id;
           if (!phone) {
             console.error('[webhook] ⚠️ رسالة بلا رقم —', JSON.stringify(msg).slice(0, 400));
             continue;
