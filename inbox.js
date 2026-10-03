@@ -500,19 +500,46 @@ button{background:var(--me);color:#fff;border:0;border-radius:20px;padding:10px 
 </main>
 <script>
 let KEY='';
+function ckGet(n){
+  try{
+    var m=document.cookie.split(';');
+    for(var i=0;i<m.length;i++){
+      var c=m[i].trim(), j=c.indexOf('=');
+      if(j>0&&c.slice(0,j)===n) return decodeURIComponent(c.slice(j+1));
+    }
+  }catch(e){}
+  return '';
+}
+function ckSet(n,v){
+  try{
+    var d=new Date(Date.now()+90*864e5).toUTCString();
+    document.cookie=n+'='+encodeURIComponent(v)+'; expires='+d+'; path=/; SameSite=Lax'+
+      (location.protocol==='https:'?'; Secure':'');
+  }catch(e){}
+}
+function saveKey(v){
+  KEY=v;
+  var okLS=false;
+  try{localStorage.setItem('hsaKey',v);okLS=localStorage.getItem('hsaKey')===v;}catch(e){}
+  ckSet('hsak',v);
+  return okLS||ckGet('hsak')===v;
+}
 (function(){
-  /* المفتاح: من الرابط إذا موجود (الروابط المحفوظة بالتلفون تشتغل دائماً)،
-     وإلا من ذاكرة المتصفح. ما ننشّله من الرابط — هذا كان يكسر الروابط المحفوظة. */
+  /* ترتيب المصادر: الرابط ← الكوكي (السيرفر يثبّتها) ← ذاكرة المتصفح.
+     نعتمد على الكوكي أولاً لأن localStorage ممكن يكون محظور وقتها يفشل بصمت. */
   const u=new URLSearchParams(location.search).get('key')||'';
-  if(u){KEY=u;try{localStorage.setItem('hsaKey',u);}catch(e){}return;}
+  if(u){saveKey(u);return;}
+  const c=ckGet('hsak');
+  if(c){KEY=c;try{localStorage.setItem('hsaKey',c);}catch(e){}return;}
   try{KEY=localStorage.getItem('hsaKey')||'';}catch(e){}
+  if(KEY) ckSet('hsak',KEY);
 })();
 if(KEY){try{document.getElementById('lnkContract').href='/contract?key='+encodeURIComponent(KEY);}catch(e){}}
 
 function askKey(msg){
   const v=(prompt(msg||'مفتاح الإنبوكس:')||'').trim();
   if(!v)return false;
-  KEY=v;try{localStorage.setItem('hsaKey',v);}catch(e){}
+  if(!saveKey(v)) alert('المفتاح اشتغل، بس متصفحك ما يسمح بحفظه.\\nافتح الصفحة بالرابط: /inbox?key=...');
   return true;
 }
 document.getElementById('bPhone').onclick=function(){
@@ -1049,10 +1076,37 @@ input.ltr{direction:ltr;unicode-bidi:embed;text-align:left}
 
 <script>
 var KEY='';
+function ckGet(n){
+  try{
+    var m=document.cookie.split(';');
+    for(var i=0;i<m.length;i++){
+      var c=m[i].trim(), j=c.indexOf('=');
+      if(j>0&&c.slice(0,j)===n) return decodeURIComponent(c.slice(j+1));
+    }
+  }catch(e){}
+  return '';
+}
+function ckSet(n,v){
+  try{
+    var d=new Date(Date.now()+90*864e5).toUTCString();
+    document.cookie=n+'='+encodeURIComponent(v)+'; expires='+d+'; path=/; SameSite=Lax'+
+      (location.protocol==='https:'?'; Secure':'');
+  }catch(e){}
+}
+function saveKey(v){
+  KEY=v;
+  var okLS=false;
+  try{localStorage.setItem('hsaKey',v);okLS=localStorage.getItem('hsaKey')===v;}catch(e){}
+  ckSet('hsak',v);
+  return okLS||ckGet('hsak')===v;
+}
 (function(){
   var u=new URLSearchParams(location.search).get('key')||'';
-  if(u){KEY=u;try{localStorage.setItem('hsaKey',u);}catch(e){}return;}
+  if(u){saveKey(u);return;}
+  var c=ckGet('hsak');
+  if(c){KEY=c;try{localStorage.setItem('hsaKey',c);}catch(e){}return;}
   try{KEY=localStorage.getItem('hsaKey')||'';}catch(e){}
+  if(KEY) ckSet('hsak',KEY);
 })();
 
 if(KEY){try{document.getElementById('back').href='/inbox?key='+encodeURIComponent(KEY);}catch(e){}}
@@ -1142,20 +1196,53 @@ $('bSend').onclick=async function(){
 </script>
 </body></html>`;
 
+/* نقرأ الكوكي بإيدنا حتى ما نضيف اعتمادية جديدة */
+function readCookie(req, name) {
+  const raw = req.headers && req.headers.cookie;
+  if (!raw) return '';
+  for (const part of String(raw).split(';')) {
+    const i = part.indexOf('=');
+    if (i < 0) continue;
+    if (part.slice(0, i).trim() === name) {
+      try { return decodeURIComponent(part.slice(i + 1).trim()); } catch { return ''; }
+    }
+  }
+  return '';
+}
+
+const SESSION_DAYS = 90;
+
 function mount(app, wa) {
   const ok = (req) => {
-    const key = req.query.key || req.body?.key;
+    const key = req.query.key || req.body?.key || readCookie(req, 'hsak');
     return process.env.INBOX_KEY && key === process.env.INBOX_KEY;
+  };
+
+  /* مفتاح صحيح بالرابط ⇒ السيرفر يثبّت الجلسة بكوكي.
+     هيج ما نعتمد على localStorage الي ممكن يكون محظور بالمتصفح. */
+  const stick = (req, res) => {
+    const key = req.query.key;
+    if (key && process.env.INBOX_KEY && key === process.env.INBOX_KEY) {
+      res.cookie('hsak', key, {
+        maxAge: SESSION_DAYS * 24 * 60 * 60 * 1000,
+        httpOnly: false,          // الصفحة تقراها حتى تعبّي KEY
+        sameSite: 'lax',
+        secure: true,
+        path: '/',
+      });
+    }
   };
 
   app.get('/inbox', (req, res) => {
     if (!process.env.INBOX_KEY) return res.status(503).send('INBOX_KEY غير مضبوط');
+    stick(req, res);
     res.type('html').send(PAGE);
   });
 
   /* ── صفحة العقد المستقلة — خارج الإنبوكس ── */
   app.get('/contract', (req, res) => {
     if (!process.env.INBOX_KEY) return res.status(503).send('INBOX_KEY غير مضبوط');
+    stick(req, res);
     res.type('html').send(CONTRACT_PAGE);
   });
 
