@@ -743,11 +743,11 @@ $('btnDoc').onclick=async()=>{
   if(!store)return;
   const owner=(prompt('اسم صاحب المتجر / ممثّله:')||'').trim();
   if(!owner)return;
-  const pick=(prompt('أي نسخة ترسل؟\n\n1 = مسودة للمراجعة (بدون ختم)\n2 = نسخة نهائية مختومة','1')||'').trim();
+  const pick=(prompt('أي نسخة ترسل؟\\n\\n1 = مسودة للمراجعة (بدون ختم)\\n2 = نسخة نهائية مختومة','1')||'').trim();
   if(pick!=='1'&&pick!=='2')return;
   const seal=pick==='2';
   if(!confirm((seal?'أرسل النسخة النهائية المختومة؟':'أرسل المسودة للمراجعة؟')
-    +'\n\nالمتجر: '+store+'\nيمثله: '+owner))return;
+    +'\\n\\nالمتجر: '+store+'\\nيمثله: '+owner))return;
   $('btnDoc').disabled=true;$('btnDoc').textContent='⏳';
   try{
     const r=await fetch('/inbox/api/send-contract',{method:'POST',
