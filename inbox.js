@@ -457,6 +457,8 @@ button{background:var(--me);color:#fff;border:0;border-radius:20px;padding:10px 
   <button id="bell" class="ghost" title="تنبيه صوتي" style="padding:5px 10px;font-size:15px">🔔</button>
   <a href="/contract" id="lnkContract" class="ghost" title="سوّي عقد بدون محادثة"
      style="padding:6px 11px;font-size:12.5px;text-decoration:none;display:inline-block">📄 عقد جديد</a>
+  <button id="bPhone" class="ghost" title="انسخ رابط يشتغل بالتلفون بدون ما تدخل المفتاح"
+     style="padding:6px 11px;font-size:12.5px">📱 رابط التلفون</button>
 </header>
 <main>
   <div id="listwrap">
@@ -513,6 +515,18 @@ function askKey(msg){
   KEY=v;try{localStorage.setItem('hsaKey',v);}catch(e){}
   return true;
 }
+document.getElementById('bPhone').onclick=function(){
+  if(!KEY){alert('أدخل المفتاح أول');return;}
+  var link=location.origin+'/inbox?key='+encodeURIComponent(KEY);
+  var done=function(){
+    var b=document.getElementById('bPhone'), t=b.textContent;
+    b.textContent='✅ انتسخ'; setTimeout(function(){b.textContent=t;},1800);
+  };
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(link).then(done,function(){prompt('انسخ الرابط:',link);});
+  } else { prompt('انسخ الرابط ودزّه لنفسك بالواتساب:',link); }
+};
+
 function keyGate(){
   $('list').innerHTML='<div class="empty">محتاج مفتاح الإنبوكس<br><br>'
     +'<button class="ghost" onclick="relogin()">أدخل المفتاح</button></div>';
@@ -592,6 +606,7 @@ function showAll(){
   render();
 }
 function render(){
+  if(!KEY){keyGate();return;}
   const c={all:allThreads.length,unread:0,store:0,courier:0,customer:0,new:0,open:0,done:0};
   allThreads.forEach(t=>{if(t.unread)c.unread++;if(c[t.kind]!==undefined)c[t.kind]++;if(c[t.status]!==undefined)c[t.status]++;});
   document.querySelectorAll('#fKind button').forEach(b=>{
