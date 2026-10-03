@@ -168,6 +168,12 @@ const markSeen    = (phone) => { thread(phone).unread = 0; };
 const isBotPaused = (phone) => !!threads.get(phone)?.botPaused;
 const setBotPaused = (phone, v) => { thread(phone).botPaused = !!v; };
 
+/** بيانات المتجر الي جمعها البوت — يستعملها زر العقد بدل ما يكتبها الموظف */
+function setStore(phone, data = {}) {
+  const t = thread(String(phone));
+  t.store = { ...(t.store || {}), ...data };
+}
+
 /* ═══════════════ التصنيف ═══════════════ */
 
 /* ── الرسايل الي تنعرض ──
@@ -297,6 +303,7 @@ function list() {
         kind: kindOf(t),
         status: t.status,
         step: t.step,
+        store: t.store || null,
         unread: t.unread,
         notes,
         botPaused: t.botPaused,
@@ -484,7 +491,27 @@ button{background:var(--me);color:#fff;border:0;border-radius:20px;padding:10px 
   </div>
 </main>
 <script>
-const KEY=new URLSearchParams(location.search).get('key')||'';
+let KEY='';
+(function(){
+  /* المفتاح: من الرابط أول مرة، بعدها ينحفظ بالمتصفح وينشال من الرابط
+     حتى ما يبقى مكشوف بالمفضّلة ولا بسجل التصفّح */
+  const u=new URLSearchParams(location.search).get('key')||'';
+  if(u){KEY=u;try{localStorage.setItem('hsaKey',u);}catch(e){}
+        try{history.replaceState(null,'',location.pathname);}catch(e){}return;}
+  try{KEY=localStorage.getItem('hsaKey')||'';}catch(e){}
+})();
+function askKey(msg){
+  const v=(prompt(msg||'مفتاح الإنبوكس:')||'').trim();
+  if(!v)return false;
+  KEY=v;try{localStorage.setItem('hsaKey',v);}catch(e){}
+  return true;
+}
+function keyGate(){
+  $('list').innerHTML='<div class="empty">محتاج مفتاح الإنبوكس<br><br>'
+    +'<button class="ghost" onclick="relogin()">أدخل المفتاح</button></div>';
+  $('stats').innerHTML='';
+}
+function relogin(){ if(askKey('مفتاح الإنبوكس:')) loadList(); }
 let cur=null,curData=null,allThreads=[],st={},fKind='all',fStatus='all',q='';
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -516,8 +543,19 @@ const pass=t=>{
 };
 
 async function loadList(){
-  const r=await fetch('/inbox/api/threads?key='+encodeURIComponent(KEY));
-  if(!r.ok){$('list').innerHTML='<div class="empty">مفتاح غير صحيح</div>';return;}
+  if(!KEY){keyGate();return;}
+  let r;
+  try{ r=await fetch('/inbox/api/threads?key='+encodeURIComponent(KEY)); }
+  catch(e){ $('list').innerHTML='<div class="empty">ماكو اتصال بالسيرفر — نحاول مرة ثانية...</div>'; return; }
+  if(r.status===401){
+    try{localStorage.removeItem('hsaKey');}catch(e){}
+    KEY='';
+    $('list').innerHTML='<div class="empty">المفتاح غير صحيح<br><br>'
+      +'<button class="ghost" onclick="relogin()">أدخل المفتاح</button></div>';
+    $('stats').innerHTML='';
+    return;
+  }
+  if(!r.ok){$('list').innerHTML='<div class="empty">السيرفر رجّع خطأ '+r.status+'</div>';return;}
   const d=await r.json();
   allThreads=d.threads;st=d.stats||{};
   onCounts(st.unread||0);
@@ -739,9 +777,11 @@ $('btnLoc').onclick=async()=>{
 /* ── إرسال عقد المتاجر ── */
 $('btnDoc').onclick=async()=>{
   if(!cur)return alert('اختر محادثة أول');
-  const store=(prompt('اسم المتجر الإلكتروني:')||'').trim();
+  const sv=(curData&&curData.store)||{};
+  let store=sv.name||'', owner=sv.rep||'';
+  if(!store) store=(prompt('اسم المتجر (ما جمعه البوت):')||'').trim();
   if(!store)return;
-  const owner=(prompt('اسم صاحب المتجر / ممثّله:')||'').trim();
+  if(!owner) owner=(prompt('اسم الممثل القانوني (ما جمعه البوت):')||'').trim();
   if(!owner)return;
   const pick=(prompt('أي نسخة ترسل؟\\n\\n1 = مسودة للمراجعة (بدون ختم)\\n2 = نسخة نهائية مختومة','1')||'').trim();
   if(pick!=='1'&&pick!=='2')return;
@@ -879,7 +919,7 @@ function mount(app, wa) {
     markSeen(t.phone);
     const lastIn = [...t.messages].reverse().find((m) => m.dir === 'in');
     res.json({
-      phone: t.phone, name: t.name, step: t.step, kind: kindOf(t),
+      phone: t.phone, name: t.name, step: t.step, kind: kindOf(t), store: t.store || null,
       status: t.status, botPaused: t.botPaused,
       lastInAt: lastIn ? lastIn.at : null, messages: visible(t.messages),
     });
@@ -983,9 +1023,15 @@ function mount(app, wa) {
      نفس ملف العقد الأصلي، نعبّي بس اسم المتجر واسم ممثّله */
   app.post('/inbox/api/send-contract', async (req, res) => {
     if (!ok(req)) return res.status(401).json({ error: 'مفتاح غير صحيح' });
-    const { phone, store, owner } = req.body || {};
+    const { phone } = req.body || {};
     const sealed = req.body?.seal !== false;   // الافتراضي: نسخة مختومة
     if (!phone) return res.status(400).json({ error: 'phone مطلوب' });
+    // الأسماء من المحادثة أولاً — الموظف ما يكتبها إلا إذا ما جمعها البوت
+    const saved = (get(String(phone)) || {}).store || {};
+    const store = req.body?.store || saved.name  || '';
+    const owner = req.body?.owner || saved.rep   || '';
+    if (!store) return res.status(400).json({ error: 'ماكو اسم متجر محفوظ بهذي المحادثة — اكتبه يدوي' });
+    if (!owner) return res.status(400).json({ error: 'ماكو اسم ممثل قانوني محفوظ — اكتبه يدوي' });
     try {
       const contract = require('./contract');
       const pdf  = await contract.fillContract({ store, owner, seal: sealed });
@@ -1040,6 +1086,6 @@ loadFromDisk();
 importRecovered();
 
 module.exports = {
-  record, setStep, markSeen, isBotPaused, setBotPaused,
+  record, setStep, markSeen, isBotPaused, setBotPaused, setStore,
   setStatus, addNote, list, get, stats, mount,
 };

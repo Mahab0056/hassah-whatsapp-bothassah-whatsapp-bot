@@ -256,6 +256,20 @@ async function handle(phone, incoming) {
         'بمسار تسجيل المتجر، بخطوة اسم المتجر. سأل سؤال بدل ما ينطي الاسم.',
         { resumeText: F.STORE.askName })) return;
       s.data.storeName = text.slice(0, 120);
+      s.step = 'STORE_REP';
+      return wa.sendText(phone, F.STORE.askRep);
+    }
+
+    case 'STORE_REP': {
+      if (!text || text.trim().length < 5 || text.trim().split(/\s+/).length < 2) {
+        return wa.sendText(phone, F.STORE.repHint);
+      }
+      if (ai.looksLikeQuestion(text) && await aiReply(phone,
+        'بمسار تسجيل المتجر، بخطوة اسم الممثل القانوني. سأل سؤال بدل ما ينطي الاسم.',
+        { resumeText: F.STORE.askRep })) return;
+      s.data.legalRep = text.trim().slice(0, 120);
+      // نخزّنهم بالإنبوكس حتى الموظف يرسل العقد بدون ما يكتب شي
+      try { inbox.setStore(phone, { name: s.data.storeName, rep: s.data.legalRep }); } catch {}
       s.step = 'STORE_CATEGORY';
       return wa.sendList(phone, {
         body: F.STORE.askCategory,
@@ -280,6 +294,7 @@ async function handle(phone, incoming) {
       }
       s.data.category = id;
       s.data.categoryLabel = F.LABELS[id];
+      try { inbox.setStore(phone, { category: s.data.categoryLabel }); } catch {}
       s.step = 'STORE_PHOTOS';
       return wa.sendButtons(phone, {
         body: F.STORE.askPhotos, buttons: F.STORE.photoButtons,
