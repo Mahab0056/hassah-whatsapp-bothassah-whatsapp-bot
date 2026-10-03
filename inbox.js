@@ -383,6 +383,10 @@ main{flex:1;display:flex;min-height:0}
 .badge{background:#3ddc84;color:#04150c;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:800}
 .wait{color:var(--warn);font-weight:700}.wait.bad{color:var(--bad)}
 .note-c{background:#2a2f3d;color:#c6b2ff;border-radius:5px;padding:1px 6px;font-size:10.5px}
+.fbar{background:#1a2030;border-bottom:1px solid var(--line);padding:7px 13px;font-size:12px;
+  color:var(--dim);display:flex;align-items:center;gap:8px}
+.fbar b{color:var(--txt)}
+.fbar a{margin-inline-start:auto;color:var(--acc2);cursor:pointer;font-weight:700;text-decoration:none}
 
 #chat{flex:1;display:flex;flex-direction:column;min-width:0;background:
   radial-gradient(1200px 600px at 80% -10%,#141a28 0,var(--bg) 60%)}
@@ -451,6 +455,8 @@ button{background:var(--me);color:#fff;border:0;border-radius:20px;padding:10px 
   <h1><span class="pulse"></span> إنبوكس هسة</h1>
   <div class="stats" id="stats"></div>
   <button id="bell" class="ghost" title="تنبيه صوتي" style="padding:5px 10px;font-size:15px">🔔</button>
+  <a href="/contract" id="lnkContract" class="ghost" title="سوّي عقد بدون محادثة"
+     style="padding:6px 11px;font-size:12.5px;text-decoration:none;display:inline-block">📄 عقد جديد</a>
 </header>
 <main>
   <div id="listwrap">
@@ -493,13 +499,14 @@ button{background:var(--me);color:#fff;border:0;border-radius:20px;padding:10px 
 <script>
 let KEY='';
 (function(){
-  /* المفتاح: من الرابط أول مرة، بعدها ينحفظ بالمتصفح وينشال من الرابط
-     حتى ما يبقى مكشوف بالمفضّلة ولا بسجل التصفّح */
+  /* المفتاح: من الرابط إذا موجود (الروابط المحفوظة بالتلفون تشتغل دائماً)،
+     وإلا من ذاكرة المتصفح. ما ننشّله من الرابط — هذا كان يكسر الروابط المحفوظة. */
   const u=new URLSearchParams(location.search).get('key')||'';
-  if(u){KEY=u;try{localStorage.setItem('hsaKey',u);}catch(e){}
-        try{history.replaceState(null,'',location.pathname);}catch(e){}return;}
+  if(u){KEY=u;try{localStorage.setItem('hsaKey',u);}catch(e){}return;}
   try{KEY=localStorage.getItem('hsaKey')||'';}catch(e){}
 })();
+if(KEY){try{document.getElementById('lnkContract').href='/contract?key='+encodeURIComponent(KEY);}catch(e){}}
+
 function askKey(msg){
   const v=(prompt(msg||'مفتاح الإنبوكس:')||'').trim();
   if(!v)return false;
@@ -578,7 +585,9 @@ function renderStats(){
 const tile=(v,l,c)=>'<div class="stat '+(c||'')+'"><b>'+v+'</b><span>'+l+'</span></div>';
 
 function showAll(){
-  fStatus='all';
+  fStatus='all';fKind='all';q='';
+  $('search').value='';
+  document.querySelectorAll('#fKind button').forEach(b=>b.classList.toggle('on',b.dataset.f==='all'));
   document.querySelectorAll('#fStatus button').forEach(b=>b.classList.toggle('on',b.dataset.s==='all'));
   render();
 }
@@ -594,7 +603,12 @@ function render(){
   let rows=allThreads.filter(pass);
   // لمن نعرض «ينتظر رد» نرتّب بالأطول انتظاراً — الي ينتظر ٤ ساعات أول صف
   if(fStatus==='unread') rows=rows.slice().sort((a,b)=>(b.waitMs||0)-(a.waitMs||0)||(a.lastAt||0)-(b.lastAt||0));
-  $('list').innerHTML=rows.map(t=>{
+  const hidden=allThreads.length-rows.length;
+  const fbar=hidden>0
+    ?'<div class="fbar">تعرض <b>'+rows.length+'</b> من <b>'+allThreads.length+'</b> محادثة · '+hidden+' مخفية بالفلتر'+
+      '<a onclick="showAll()">اعرض الكل</a></div>'
+    :'';
+  $('list').innerHTML=fbar+rows.map(t=>{
     const k=KINDS[t.kind]||KINDS.unknown;
     const w=t.waitMs>5*60000?'<span class="wait'+(t.waitMs>30*60000?' bad':'')+'">⏱ '+dur(t.waitMs)+'</span>':'';
     return '<div class="row'+(t.phone===cur?' sel':'')+'" onclick="open_(\\''+t.phone+'\\')">'+
@@ -905,6 +919,214 @@ function toOggOpus(inputBuf, inMime) {
   });
 }
 
+/* 07XXXXXXXXX  →  9647XXXXXXXXX */
+function normPhone(raw) {
+  let d = String(raw || '').replace(/[^\d]/g, '');
+  if (!d) return '';
+  if (d.startsWith('00')) d = d.slice(2);
+  if (d.startsWith('964')) return d;
+  if (d.startsWith('0')) return '964' + d.slice(1);
+  if (d.length === 10 && d.startsWith('7')) return '964' + d;
+  return d;
+}
+
+const CONTRACT_PAGE = `<!doctype html>
+<html lang="ar" dir="rtl"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>عقد متجر — هسة</title>
+<style>
+:root{--bg:#0b0e14;--panel:#11151d;--panel2:#161b26;--line:#232a38;--txt:#e9edf3;
+  --dim:#8d97a8;--acc:#6d5efc;--acc2:#00c2a8;--warn:#f0a132;--bad:#ef5361;--done:#3ddc84}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.6 -apple-system,"Segoe UI",Roboto,"Noto Naskh Arabic",sans-serif;
+  background:var(--bg);color:var(--txt);min-height:100dvh}
+header{background:linear-gradient(135deg,#171a2e,#101522);border-bottom:1px solid var(--line);
+  padding:12px 18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+header h1{margin:0;font-size:17px;font-weight:700;display:flex;align-items:center;gap:9px}
+header a{margin-inline-start:auto;color:var(--dim);font-size:13px;text-decoration:none;
+  border:1px solid var(--line);border-radius:8px;padding:6px 12px}
+header a:hover{color:#fff;border-color:#3a4459}
+.wrap{max-width:1180px;margin:0 auto;padding:18px;display:grid;gap:18px;grid-template-columns:400px 1fr}
+@media(max-width:900px){.wrap{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
+.card h2{margin:0 0 14px;font-size:14px;color:var(--dim);font-weight:700;letter-spacing:.3px}
+label{display:block;font-size:12.5px;color:var(--dim);font-weight:600;margin:14px 0 6px}
+label:first-of-type{margin-top:0}
+input{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+  border-radius:10px;padding:11px 13px;font:inherit;font-size:14.5px}
+input:focus{outline:none;border-color:var(--acc)}
+input.ltr{direction:ltr;unicode-bidi:embed;text-align:left}
+.hint{font-size:11.5px;color:#6c7687;margin-top:5px}
+.seg{display:flex;gap:8px;margin-top:4px}
+.seg button{flex:1;background:#1a2030;color:#b6bfcf;border:1px solid var(--line);border-radius:10px;
+  padding:11px;font:inherit;font-size:13.5px;font-weight:700;cursor:pointer;transition:.15s}
+.seg button:hover{border-color:#3a4459}
+.seg button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.btns{display:flex;gap:8px;margin-top:20px;flex-wrap:wrap}
+.btn{flex:1;min-width:120px;border:none;border-radius:10px;padding:12px;font:inherit;font-size:14px;
+  font-weight:700;cursor:pointer;transition:.15s}
+.btn.p{background:var(--acc2);color:#04231e}
+.btn.s{background:#222a3a;color:#c9cfd8;border:1px solid var(--line)}
+.btn.w{background:#1f7a54;color:#fff}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn:hover:not(:disabled){filter:brightness(1.12)}
+#msg{margin-top:14px;font-size:13.5px;border-radius:10px;padding:0;min-height:0;transition:.2s}
+#msg.on{padding:11px 13px}
+#msg.ok{background:#123020;color:#8ff0b5;border:1px solid #1d5236}
+#msg.err{background:#331519;color:#ffadb5;border:1px solid #5c2027}
+#msg.busy{background:#1a2030;color:var(--dim);border:1px solid var(--line)}
+.prev{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;
+  display:flex;flex-direction:column;min-height:620px}
+.prev .bar{padding:10px 15px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--dim);
+  display:flex;align-items:center;gap:8px}
+.prev iframe{flex:1;width:100%;border:none;background:#2b2f38}
+.empty{flex:1;display:grid;place-items:center;color:#5a6373;font-size:14px;text-align:center;padding:40px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--warn)}
+.dot.ok{background:var(--done)}
+</style></head><body>
+
+<header>
+  <h1>📄 عقد متجر — هسة</h1>
+  <a href="/inbox" id="back">↩ رجوع للإنبوكس</a>
+</header>
+
+<div class="wrap">
+  <div class="card">
+    <h2>بيانات العقد</h2>
+
+    <label>اسم المتجر <span style="color:var(--bad)">*</span></label>
+    <input id="store" placeholder="مثال: متجر الورد للعطور" autocomplete="off">
+
+    <label>اسم الممثّل القانوني <span style="color:var(--bad)">*</span></label>
+    <input id="owner" placeholder="مثال: علي حسن كريم" autocomplete="off">
+    <div class="hint">الاسم الكامل مثل ما بالهوية — يُكتب بالعقد كطرف ثاني.</div>
+
+    <label>نوع النسخة</label>
+    <div class="seg">
+      <button id="bDraft" data-seal="0">مسودة · بعلامة مائية</button>
+      <button id="bFinal" class="on" data-seal="1">نهائية · مختومة وموقّعة</button>
+    </div>
+    <div class="hint" id="sealHint">النهائية تحمل تاريخ اليوم + الختم + التوقيع.</div>
+
+    <label>رقم واتساب (اختياري — للإرسال المباشر)</label>
+    <input id="phone" class="ltr" placeholder="07XX XXX XXXX" autocomplete="off">
+    <div class="hint">اتركه فارغ إذا تريد تنزيل الملف بس.</div>
+
+    <div class="btns">
+      <button class="btn p" id="bPrev">👁 معاينة</button>
+      <button class="btn s" id="bDown">⬇ تنزيل</button>
+    </div>
+    <div class="btns" style="margin-top:8px">
+      <button class="btn w" id="bSend">دزّه واتساب</button>
+    </div>
+
+    <div id="msg"></div>
+  </div>
+
+  <div class="prev">
+    <div class="bar"><span class="dot" id="pdot"></span><span id="ptitle">ماكو معاينة بعد</span>
+      <a id="popen" style="margin-inline-start:auto;color:var(--acc2);display:none;text-decoration:none;font-weight:700"
+         target="_blank">↗ افتحها بتبويب</a></div>
+    <div class="empty" id="pempty">عبّي الاسمين واضغط «معاينة»<br>حتى تشوف العقد قبل ما تدزّه</div>
+    <iframe id="pframe" style="display:none"></iframe>
+  </div>
+</div>
+
+<script>
+var KEY='';
+(function(){
+  var u=new URLSearchParams(location.search).get('key')||'';
+  if(u){KEY=u;try{localStorage.setItem('hsaKey',u);}catch(e){}return;}
+  try{KEY=localStorage.getItem('hsaKey')||'';}catch(e){}
+})();
+
+if(KEY){try{document.getElementById('back').href='/inbox?key='+encodeURIComponent(KEY);}catch(e){}}
+
+var SEAL=1, lastUrl=null;
+var $=function(id){return document.getElementById(id);};
+
+function setSeal(v){
+  SEAL=v;
+  $('bDraft').className = v?'':'on';
+  $('bFinal').className = v?'on':'';
+  $('sealHint').textContent = v
+    ? 'النهائية تحمل تاريخ اليوم + الختم + التوقيع.'
+    : 'المسودة بدون تاريخ وبدون ختم، وعليها علامة مائية «مسودة عقد».';
+}
+$('bDraft').onclick=function(){setSeal(0);};
+$('bFinal').onclick=function(){setSeal(1);};
+
+function say(cls,txt){
+  var m=$('msg');
+  m.className = txt ? ('on '+cls) : '';
+  m.textContent = txt||'';
+}
+
+function vals(){
+  var s=$('store').value.trim(), o=$('owner').value.trim();
+  if(!s){say('err','اكتب اسم المتجر');$('store').focus();return null;}
+  if(!o){say('err','اكتب اسم الممثّل القانوني');$('owner').focus();return null;}
+  if(o.split(/\\s+/).length<2){say('err','اسم الممثّل القانوني لازم اسمين على الأقل');$('owner').focus();return null;}
+  if(!KEY){say('err','ماكو مفتاح — افتح الصفحة بـ ?key=... مرة واحدة');return null;}
+  return {store:s,owner:o,seal:SEAL===1,key:KEY};
+}
+
+async function build(){
+  var v=vals(); if(!v) return null;
+  say('busy','يبني العقد…');
+  var r=await fetch('/contract/api/build',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(v)});
+  if(!r.ok){
+    var e={}; try{e=await r.json();}catch(x){}
+    say('err', e.error || ('فشل البناء — '+r.status));
+    return null;
+  }
+  var blob=await r.blob();
+  var name=decodeURIComponent(r.headers.get('X-File-Name')||'contract.pdf');
+  return {blob:blob,name:name};
+}
+
+$('bPrev').onclick=async function(){
+  var b=await build(); if(!b) return;
+  if(lastUrl) URL.revokeObjectURL(lastUrl);
+  lastUrl=URL.createObjectURL(b.blob);
+  $('pempty').style.display='none';
+  var f=$('pframe'); f.style.display='block'; f.src=lastUrl;
+  $('pdot').className='dot ok';
+  $('ptitle').textContent=b.name+'  ·  '+Math.round(b.blob.size/1024)+' كيلوبايت';
+  var po=$('popen'); po.href=lastUrl; po.style.display='inline';
+  say('ok','المعاينة جاهزة — شوفها على اليسار');
+};
+
+$('bDown').onclick=async function(){
+  var b=await build(); if(!b) return;
+  var u=URL.createObjectURL(b.blob);
+  var a=document.createElement('a'); a.href=u; a.download=b.name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function(){URL.revokeObjectURL(u);},4000);
+  say('ok','نزّلنا: '+b.name);
+};
+
+$('bSend').onclick=async function(){
+  var v=vals(); if(!v) return;
+  var p=$('phone').value.trim();
+  if(!p){say('err','اكتب رقم الواتساب أول');$('phone').focus();return;}
+  if(!confirm('أدزّ '+(SEAL?'النسخة المختومة':'المسودة')+' لـ '+p+' ؟')) return;
+  v.phone=p;
+  say('busy','يدزّ…');
+  var r=await fetch('/contract/api/send',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(v)});
+  var j={}; try{j=await r.json();}catch(x){}
+  if(r.ok && j.ok) say('ok','انرسل ✅  '+j.file+'  →  '+j.to);
+  else say('err', j.error || ('فشل الإرسال — '+r.status));
+};
+
+['store','owner','phone'].forEach(function(id){
+  $(id).addEventListener('keydown',function(e){ if(e.key==='Enter') $('bPrev').click(); });
+});
+</script>
+</body></html>`;
+
 function mount(app, wa) {
   const ok = (req) => {
     const key = req.query.key || req.body?.key;
@@ -914,6 +1136,63 @@ function mount(app, wa) {
   app.get('/inbox', (req, res) => {
     if (!process.env.INBOX_KEY) return res.status(503).send('INBOX_KEY غير مضبوط');
     res.type('html').send(PAGE);
+  });
+
+  /* ── صفحة العقد المستقلة — خارج الإنبوكس ── */
+  app.get('/contract', (req, res) => {
+    if (!process.env.INBOX_KEY) return res.status(503).send('INBOX_KEY غير مضبوط');
+    res.type('html').send(CONTRACT_PAGE);
+  });
+
+  app.post('/contract/api/build', async (req, res) => {
+    if (!ok(req)) return res.status(401).json({ error: 'مفتاح غير صحيح' });
+    const store = String((req.body && req.body.store) || '').trim();
+    const owner = String((req.body && req.body.owner) || '').trim();
+    const seal  = (req.body && req.body.seal) !== false;
+    if (!store) return res.status(400).json({ error: 'اسم المتجر مطلوب' });
+    if (!owner) return res.status(400).json({ error: 'اسم الممثّل القانوني مطلوب' });
+    try {
+      const contract = require('./contract');
+      const pdf  = await contract.fillContract({ store, owner, seal });
+      const name = contract.fileName(store, seal);
+      res.setHeader('X-File-Name', encodeURIComponent(name));
+      res.setHeader('Access-Control-Expose-Headers', 'X-File-Name');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'inline; filename="contract.pdf"');
+      res.send(pdf);
+    } catch (e) {
+      console.error('[contract] بناء العقد فشل:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/contract/api/send', async (req, res) => {
+    if (!ok(req)) return res.status(401).json({ error: 'مفتاح غير صحيح' });
+    const store = String((req.body && req.body.store) || '').trim();
+    const owner = String((req.body && req.body.owner) || '').trim();
+    const seal  = (req.body && req.body.seal) !== false;
+    const to    = normPhone(req.body && req.body.phone);
+    if (!store) return res.status(400).json({ error: 'اسم المتجر مطلوب' });
+    if (!owner) return res.status(400).json({ error: 'اسم الممثّل القانوني مطلوب' });
+    if (to.length < 11) return res.status(400).json({ error: 'رقم الواتساب مو صحيح' });
+    try {
+      const contract = require('./contract');
+      const pdf  = await contract.fillContract({ store, owner, seal });
+      const name = contract.fileName(store, seal);
+      const id   = await wa.uploadMedia(pdf, 'application/pdf', name);
+      await wa.sendDocument(to, id, {
+        filename: name,
+        caption: seal
+          ? `عقد خدمات — ${contract.clean(store)}`
+          : `مسودة عقد للمراجعة — ${contract.clean(store)}`,
+        by: 'agent',
+      });
+      console.log(`[contract] 📄 ${seal ? 'مختوم' : 'مسودة'} ${to} — ${contract.clean(store)} (صفحة مستقلة)`);
+      res.json({ ok: true, file: name, to, sealed: seal });
+    } catch (e) {
+      console.error('[contract] إرسال العقد فشل:', e.message, e.details || '');
+      res.status(502).json({ error: (e.details && e.details.error && e.details.error.message) || e.message });
+    }
   });
 
   app.get('/inbox/api/threads', (req, res) => {
