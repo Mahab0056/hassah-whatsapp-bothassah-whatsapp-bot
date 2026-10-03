@@ -462,11 +462,11 @@ button{background:var(--me);color:#fff;border:0;border-radius:20px;padding:10px 
       <button data-f="customer">🛒 زبائن</button>
     </div>
     <div class="tabs st" id="fStatus">
-      <button data-s="all" class="on">كل الحالات</button>
+      <button data-s="all">كل الحالات</button>
       <button data-s="new">🔵 جديد</button>
       <button data-s="open">🟠 قيد المعالجة</button>
       <button data-s="done">🟢 تم</button>
-      <button data-s="unread">🔴 غير مقروء</button>
+      <button data-s="unread" class="on">🔴 ينتظر رد</button>
     </div>
     <div id="list"></div>
   </div>
@@ -512,7 +512,7 @@ function keyGate(){
   $('stats').innerHTML='';
 }
 function relogin(){ if(askKey('مفتاح الإنبوكس:')) loadList(); }
-let cur=null,curData=null,allThreads=[],st={},fKind='all',fStatus='all',q='';
+let cur=null,curData=null,allThreads=[],st={},fKind='all',fStatus='unread',q='';
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ago=t=>{const s=(Date.now()-t)/1000;if(s<60)return'الآن';if(s<3600)return Math.floor(s/60)+' د';
@@ -577,6 +577,11 @@ function renderStats(){
 }
 const tile=(v,l,c)=>'<div class="stat '+(c||'')+'"><b>'+v+'</b><span>'+l+'</span></div>';
 
+function showAll(){
+  fStatus='all';
+  document.querySelectorAll('#fStatus button').forEach(b=>b.classList.toggle('on',b.dataset.s==='all'));
+  render();
+}
 function render(){
   const c={all:allThreads.length,unread:0,store:0,courier:0,customer:0,new:0,open:0,done:0};
   allThreads.forEach(t=>{if(t.unread)c.unread++;if(c[t.kind]!==undefined)c[t.kind]++;if(c[t.status]!==undefined)c[t.status]++;});
@@ -586,7 +591,9 @@ function render(){
     const base=b.dataset.base||(b.dataset.base=b.textContent);
     b.textContent=base+' '+(b.dataset.s==='all'?c.all:(c[b.dataset.s]||0));});
 
-  const rows=allThreads.filter(pass);
+  let rows=allThreads.filter(pass);
+  // لمن نعرض «ينتظر رد» نرتّب بالأطول انتظاراً — الي ينتظر ٤ ساعات أول صف
+  if(fStatus==='unread') rows=rows.slice().sort((a,b)=>(b.waitMs||0)-(a.waitMs||0)||(a.lastAt||0)-(b.lastAt||0));
   $('list').innerHTML=rows.map(t=>{
     const k=KINDS[t.kind]||KINDS.unknown;
     const w=t.waitMs>5*60000?'<span class="wait'+(t.waitMs>30*60000?' bad':'')+'">⏱ '+dur(t.waitMs)+'</span>':'';
@@ -604,7 +611,9 @@ function render(){
         (t.notes?'<span class="note-c">📝 '+t.notes+'</span>':'')+
         (t.botPaused?'<span class="chip c-unknown">البوت متوقف</span>':'')+
       '</div></div></div>';
-  }).join('')||'<div class="empty">ماكو محادثات بهذا الفلتر</div>';
+  }).join('')||'<div class="empty">'+(fStatus==='unread'
+    ?'ماكو أحد ينتظر رد 🎉<br><br><button class="ghost" onclick="showAll()">اعرض كل المحادثات</button>'
+    :'ماكو محادثات بهذا الفلتر')+'</div>';
 }
 
 async function open_(p){

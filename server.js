@@ -15,6 +15,29 @@ const wa = require('./wa');
 const leads = require('./leads');
 const F = require('./flows');
 const inbox = require('./inbox');
+
+/* حد إرسال رمز التحقق — يمنع الهدر لمن الزبون يضغط «أعد الإرسال» بهستيريا.
+   شفنا أرقام وصلها 4 رموز خلال دقيقتين. */
+const OTP_WINDOW_MS = 15 * 60 * 1000;
+const OTP_MAX       = 3;
+const otpHits = new Map();   // رقم → [وقت, وقت, ...]
+
+function otpAllowed(to) {
+  const now = Date.now();
+  const hits = (otpHits.get(to) || []).filter((t) => now - t < OTP_WINDOW_MS);
+  if (hits.length >= OTP_MAX) {
+    const retryMs = OTP_WINDOW_MS - (now - hits[0]);
+    return { ok: false, retryAfter: Math.ceil(retryMs / 1000) };
+  }
+  hits.push(now);
+  otpHits.set(to, hits);
+  if (otpHits.size > 5000) {       // تنظيف بسيط حتى ما تكبر بلا حد
+    for (const [k, v] of otpHits) {
+      if (!v.some((t) => now - t < OTP_WINDOW_MS)) otpHits.delete(k);
+    }
+  }
+  return { ok: true };
+}
 const optout = require('./optout');
 const ai = require('./ai');
 const catalog = require('./catalog');
@@ -220,6 +243,21 @@ async function handle(phone, incoming) {
     }
   }
 
+  // ── طلب موعد/مقابلة: نلتقطه بأي لحظة بدل ما يضيع ──
+  if (text && s.step !== 'AGENT' && !String(s.step).startsWith('MEET_')) {
+    const t = text.toLowerCase();
+    if (F.MEETING.keywords.some((k) => t.includes(k))) {
+      s.step = 'MEET_DAY';
+      s.data = { ...(s.data || {}) };
+      return wa.sendList(phone, {
+        body: F.MEETING.ack,
+        button: F.MEETING.dayList.button,
+        title: F.MEETING.dayList.title,
+        rows: F.MEETING.dayList.rows,
+      });
+    }
+  }
+
   // ── أول رسالة ──
   if (s.step === 'NEW') {
     s.step = 'MENU';
@@ -390,6 +428,46 @@ async function handle(phone, incoming) {
       getSession(phone).name = sName;
       await wa.sendText(phone, doneMsg);
       return askDevice(phone, 'store', 'تطبيق التاجر');
+    }
+
+    /* ─────────── طلب موعد / مقابلة ─────────── */
+    case 'MEET_DAY': {
+      const id = choice;
+      if (!id || !F.LABELS[id] || !id.startsWith('MT_')) {
+        return wa.sendList(phone, {
+          body: F.MEETING.ack,
+          button: F.MEETING.dayList.button,
+          title: F.MEETING.dayList.title,
+          rows: F.MEETING.dayList.rows,
+        });
+      }
+      s.data.meetDay = id;
+      s.data.meetDayLabel = F.LABELS[id];
+      s.step = 'MEET_TIME';
+      return wa.sendButtons(phone, {
+        body: F.MEETING.askTime,
+        buttons: F.MEETING.timeButtons,
+      });
+    }
+
+    case 'MEET_TIME': {
+      const id = choice;
+      if (!id || !F.LABELS[id]) {
+        return wa.sendButtons(phone, {
+          body: F.MEETING.askTime,
+          buttons: F.MEETING.timeButtons,
+        });
+      }
+      s.data.meetTime = id;
+      s.data.meetTimeLabel = F.LABELS[id];
+      await leads.save({ type: 'meeting', phone, name: s.name, ...s.data }, wa);
+      const msg = F.MEETING.done(s.data);
+      const nm = s.name;
+      clearSession(phone);
+      getSession(phone).name = nm;
+      // الموظف لازم يشوفها: نوقف البوت وننقلها لقيد المعالجة
+      try { inbox.setBotPaused(phone, true); inbox.setStatus(phone, 'open', 'bot'); } catch {}
+      return wa.sendText(phone, msg);
     }
 
     /* ─────────── مسار المندوب ─────────── */
@@ -621,6 +699,16 @@ app.post('/send-otp', async (req, res) => {
   const to = String(phone).replace(/\D/g, '');
   if (!/^964\d{9,10}$/.test(to)) {
     return res.status(400).json({ ok: false, error: 'الرقم لازم يكون بصيغة 9647XXXXXXXXX' });
+  }
+
+  const gate = otpAllowed(to);
+  if (!gate.ok) {
+    console.warn(`[otp] ⏳ تجاوز الحد +${to} — ${gate.retryAfter}ث`);
+    return res.status(429).json({
+      ok: false,
+      error: 'وصلتك رموز كثيرة بوقت قصير — انتظر شوية وأعد المحاولة',
+      retryAfter: gate.retryAfter,
+    });
   }
 
   try {

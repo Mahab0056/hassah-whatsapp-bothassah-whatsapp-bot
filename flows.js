@@ -225,6 +225,49 @@ const STORE = {
     `شكراً لثقتك 🙏`,
 };
 
+
+/* ================================================================
+   طلب موعد / مقابلة — يلتقطه البوت بأي لحظة
+   ================================================================ */
+const MEETING = {
+  /* كلمات تدل على طلب موعد أو مقابلة أو اتصال */
+  keywords: [
+    'موعد', 'مواعيد', 'مقابلة', 'مقابله', 'اجتماع', 'زيارة', 'زياره',
+    'اتصل بي', 'اتصلو', 'اتصلوا', 'تتصل', 'احجز', 'حجز', 'اريد اشوفكم',
+    'اريد اجي', 'اجي للشركة', 'اجي للمكتب', 'لقاء',
+  ],
+
+  ack:
+    `أكيد 🤝 — نرتّبلك موعد.\n\n` +
+    `أي يوم يناسبك؟`,
+
+  dayList: {
+    button: 'اختار اليوم',
+    title: 'موعد المقابلة',
+    rows: [
+      { id: 'MT_TODAY', title: 'اليوم',         description: 'إذا الوقت يسمح' },
+      { id: 'MT_TMRW',  title: 'باچر',          description: 'اليوم الجاي' },
+      { id: 'MT_AFTER', title: 'بعد باچر',      description: 'بعد يومين' },
+      { id: 'MT_WEEK',  title: 'خلال هالأسبوع', description: 'الفريق يتصل ويحدد' },
+      { id: 'MT_NEXT',  title: 'الأسبوع الجاي', description: 'نأجلها للأسبوع الجاي' },
+    ],
+  },
+
+  askTime: 'وأي وقت أنسب إلك؟',
+  timeButtons: [
+    { id: 'MT_AM',  title: '🌅 صباحاً 9–12' },
+    { id: 'MT_PM',  title: '☀️ ظهراً 12–4' },
+    { id: 'MT_EVE', title: '🌆 مساءً 4–8' },
+  ],
+
+  done: (d) =>
+    `تمام ✅ سجّلت طلبك:\n\n` +
+    `📅 *اليوم:* ${d.meetDayLabel}\n` +
+    `🕐 *الوقت:* ${d.meetTimeLabel}\n\n` +
+    `زميلي راح يتصل بيك *خلال 24 ساعة* يأكّد الموعد ويحدد المكان.\n\n` +
+    `إذا تغيّر شي، اكتبلي هنا وأعدّله 🙏`,
+};
+
 /* ================================================================
    مسار المندوب
    ================================================================ */
@@ -384,6 +427,9 @@ const SETTINGS = {
 
 /* labels للحفظ */
 const LABELS = {
+  MT_TODAY: 'اليوم', MT_TMRW: 'باچر', MT_AFTER: 'بعد باچر',
+  MT_WEEK: 'خلال هالأسبوع', MT_NEXT: 'الأسبوع الجاي',
+  MT_AM: 'صباحاً 9–12', MT_PM: 'ظهراً 12–4', MT_EVE: 'مساءً 4–8',
   CAT_GROCERY: 'مواد غذائية', CAT_FASHION: 'ملابس وأزياء', CAT_BEAUTY: 'تجميل وعناية',
   CAT_ELECTRO: 'إلكترونيات', CAT_HOME: 'أثاث ومستلزمات بيت', CAT_BOOKS: 'كتب وقرطاسية',
   CAT_PHARMA: 'صيدلية ومكملات', CAT_KIDS: 'ألعاب ومستلزمات أطفال', CAT_OTHER: 'غير ذلك',
@@ -403,6 +449,6 @@ const LABELS = {
 module.exports = {
   pick, greeting, ACKS, THANKS,
   BRAND, PRICING, APPS, APP_LINKS, APP_KEYWORDS,
-  MAIN_MENU, STORE, COURIER, CUSTOMER, COMMON, SETTINGS, LABELS,
+  MAIN_MENU, STORE, COURIER, CUSTOMER, COMMON, SETTINGS, LABELS, MEETING,
   DEVICE_BUTTONS, askDevice, appLink, NOT_READY,
 };
