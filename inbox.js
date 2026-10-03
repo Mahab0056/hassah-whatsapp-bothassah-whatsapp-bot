@@ -517,6 +517,32 @@ function ckSet(n,v){
       (location.protocol==='https:'?'; Secure':'');
   }catch(e){}
 }
+function ckDel(n){
+  try{
+    var base=n+'=; Max-Age=0; path=/';
+    document.cookie=base;
+    document.cookie=base+'; SameSite=Lax';
+    document.cookie=base+'; SameSite=Lax; Secure';
+  }catch(e){}
+}
+function clearKey(){
+  KEY='';
+  try{localStorage.removeItem('hsaKey');}catch(e){}
+  ckDel('hsak');
+}
+function ckDel(n){
+  try{
+    var base=n+'=; Max-Age=0; path=/';
+    document.cookie=base;
+    document.cookie=base+'; SameSite=Lax';
+    document.cookie=base+'; SameSite=Lax; Secure';
+  }catch(e){}
+}
+function clearKey(){
+  KEY='';
+  try{localStorage.removeItem('hsaKey');}catch(e){}
+  ckDel('hsak');
+}
 function saveKey(v){
   KEY=v;
   var okLS=false;
@@ -596,9 +622,9 @@ async function loadList(){
   try{ r=await fetch('/inbox/api/threads?key='+encodeURIComponent(KEY)); }
   catch(e){ $('list').innerHTML='<div class="empty">ماكو اتصال بالسيرفر — نحاول مرة ثانية...</div>'; return; }
   if(r.status===401){
-    try{localStorage.removeItem('hsaKey');}catch(e){}
-    KEY='';
-    $('list').innerHTML='<div class="empty">المفتاح غير صحيح<br><br>'
+    clearKey();          /* لازم نمسح الكوكي بعد — لولاها نضل بحلقة 401 */
+    $('list').innerHTML='<div class="empty">المفتاح المحفوظ غلط — مسحناه<br>'
+      +'<span style="font-size:12px;color:#6c7687">انسخ INBOX_KEY من Railway والصقه</span><br><br>'
       +'<button class="ghost" onclick="relogin()">أدخل المفتاح</button></div>';
     $('stats').innerHTML='';
     return;
