@@ -15,6 +15,9 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const { spawn } = require('child_process');
+const express = require('express');
 
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 const FILE = path.join(DATA_DIR, 'inbox.jsonl');
@@ -123,6 +126,8 @@ function record(phone, dir, text, meta = {}) {
     st: meta.step || '',
     notes: [],
   };
+  if (meta.media && meta.media.id) rec.media = meta.media;
+  if (meta.location) rec.loc = meta.location;
   t.messages.push(rec);
   t.lastAt = rec.at;
   if (meta.step) t.step = meta.step;
@@ -400,6 +405,20 @@ button{background:var(--me);color:#fff;border:0;border-radius:20px;padding:10px 
 .nbtn{background:none;border:0;color:#6b7487;font-size:11px;padding:3px 4px;cursor:pointer;
   opacity:.5;transition:.15s;align-self:flex-start}
 .mwrap:hover .nbtn{opacity:1}
+.m img.ph{max-width:260px;max-height:320px;border-radius:10px;display:block;cursor:zoom-in;margin:2px 0}
+.m audio{width:250px;height:38px;display:block;margin:3px 0}
+.m .loc{display:flex;gap:7px;align-items:center;background:rgba(0,0,0,.07);
+  padding:8px 11px;border-radius:10px;text-decoration:none;color:inherit;font-size:13px;margin:2px 0}
+.m .fl{font-size:13px;opacity:.85}
+#compose .ib{background:#eef1f4;border:0;border-radius:10px;width:38px;height:38px;
+  font-size:17px;cursor:pointer;flex:none}
+#compose .ib:hover{background:#e0e5ea}
+#compose .ib.rec{background:#e5484d;color:#fff;animation:pulse 1.1s infinite}
+@keyframes pulse{50%{opacity:.55}}
+#rectime{font-size:13px;color:#e5484d;font-weight:700;min-width:42px;text-align:center}
+.lightbox{position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;
+  justify-content:center;z-index:99;cursor:zoom-out}
+.lightbox img{max-width:92vw;max-height:92vh;border-radius:8px}
 .nbtn:hover{color:var(--acc)}
 .note{background:#241f3d;border-inline-start:3px solid #7c6cff;border-radius:8px;padding:6px 10px;
   font-size:12.5px;color:#d6cdff;margin-top:5px;max-width:100%}
@@ -461,7 +480,7 @@ button{background:var(--me);color:#fff;border:0;border-radius:20px;padding:10px 
     </div>
     <div id="msgs"><div class="empty">اختار محادثة من القائمة</div></div>
     <div class="note-bar" id="note"></div>
-    <div id="compose"><input id="txt" placeholder="اكتب ردك..." autocomplete="off"><button id="send">إرسال</button></div>
+    <div id="compose"><button class="ib" id="btnVoice" title="سجّل رسالة صوتية">🎤</button><button class="ib" id="btnLoc" title="أرسل موقع الشركة">📍</button><button class="ib" id="btnDoc" title="أرسل عقد المتاجر">📄</button><span id="rectime"></span><input id="txt" placeholder="اكتب ردك..." autocomplete="off"><button id="send">إرسال</button></div>
   </div>
 </main>
 <script>
@@ -574,7 +593,7 @@ async function open_(p){
       new Date(n.at).toLocaleString('ar-IQ',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'})+
       '</b><br>'+esc(n.text)+'</div>').join('');
     return '<div class="mwrap '+m.dir+'" data-mid="'+m.id+'">'+
-      '<div class="m '+m.dir+'">'+esc(m.text)+'<span class="w">'+
+      '<div class="m '+m.dir+'">'+media(m)+esc(m.text)+'<span class="w">'+
       new Date(m.at).toLocaleTimeString('ar-IQ',{hour:'2-digit',minute:'2-digit'})+
       (m.by==='agent'?' · موظف':m.by==='bot'?' · بوت':m.by==='system'?' · نظام':'')+'</span></div>'+
       notes+
@@ -582,6 +601,34 @@ async function open_(p){
       '</div>';
   }).join('')||'<div class="empty">ماكو رسايل</div>';
   $('msgs').scrollTop=1e9;loadList();
+}
+
+
+/* يرسم الصور والصوت والمواقع داخل الفقاعة */
+function media(m){
+  const u=id=>'/inbox/media/'+encodeURIComponent(id)+'?key='+encodeURIComponent(KEY);
+  let h='';
+  if(m.loc&&m.loc.lat){
+    h+='<a class="loc" target="_blank" rel="noopener" href="https://maps.google.com/?q='+
+       m.loc.lat+','+m.loc.lng+'">📍 <span>'+esc(m.loc.name||m.loc.address||'الموقع على الخريطة')+'</span></a>';
+  }
+  if(!m.media||!m.media.id) return h;
+  const k=m.media.kind;
+  if(k==='image'||k==='sticker'){
+    h+='<img class="ph" loading="lazy" src="'+u(m.media.id)+'" onclick="zoom(this.src)" alt="صورة">';
+  }else if(k==='audio'){
+    h+='<audio controls preload="none" src="'+u(m.media.id)+'"></audio>';
+  }else if(k==='video'){
+    h+='<a class="loc" target="_blank" rel="noopener" href="'+u(m.media.id)+'">🎬 <span>افتح الفيديو</span></a>';
+  }else{
+    h+='<a class="loc" target="_blank" rel="noopener" href="'+u(m.media.id)+'">📄 <span>'+
+       esc(m.media.filename||'افتح الملف')+'</span></a>';
+  }
+  return h;
+}
+function zoom(src){
+  const d=document.createElement('div');d.className='lightbox';
+  d.innerHTML='<img src="'+src+'">';d.onclick=()=>d.remove();document.body.appendChild(d);
 }
 
 function noteForm(btn,mid){
@@ -627,6 +674,90 @@ async function send(){
 $('send').onclick=send;
 $('txt').addEventListener('keydown',e=>{if(e.key==='Enter')send();});
 
+
+/* ── تسجيل وإرسال رسالة صوتية ── */
+let mediaRec=null,chunks=[],recTimer=null,recStart=0;
+const pickMime=()=>['audio/ogg;codecs=opus','audio/webm;codecs=opus','audio/webm','audio/mp4']
+  .find(t=>window.MediaRecorder&&MediaRecorder.isTypeSupported(t))||'';
+function recUI(on){
+  $('btnVoice').classList.toggle('rec',on);
+  $('btnVoice').textContent=on?'⏹':'🎤';
+  $('btnVoice').title=on?'أوقف وأرسل':'سجّل رسالة صوتية';
+  if(!on){$('rectime').textContent='';clearInterval(recTimer);}
+}
+async function startRec(){
+  if(!cur)return alert('اختر محادثة أول');
+  if(!navigator.mediaDevices||!window.MediaRecorder)
+    return alert('المتصفح ما يدعم التسجيل. استعمل كروم أو فايرفوكس حديث.');
+  let stream;
+  try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}});}
+  catch(e){return alert('ما وصلني إذن المايك. افتح إعدادات الموقع واسمح بالمايكروفون.');}
+  const mt=pickMime();
+  try{mediaRec=mt?new MediaRecorder(stream,{mimeType:mt}):new MediaRecorder(stream);}
+  catch(e){mediaRec=new MediaRecorder(stream);}
+  chunks=[];recStart=Date.now();
+  mediaRec.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data);};
+  mediaRec.onstop=async()=>{
+    stream.getTracks().forEach(t=>t.stop());
+    recUI(false);
+    const secs=(Date.now()-recStart)/1000;
+    const blob=new Blob(chunks,{type:mediaRec.mimeType||'audio/webm'});
+    if(secs<0.7||blob.size<1200)return;                 // ضغطة غلط — ما نرسل
+    $('btnVoice').disabled=true;$('btnVoice').textContent='⏳';
+    try{
+      const r=await fetch('/inbox/api/send-voice?key='+encodeURIComponent(KEY)+'&phone='+encodeURIComponent(cur),
+        {method:'POST',headers:{'Content-Type':blob.type||'audio/webm'},body:blob});
+      if(!r.ok){const e=await r.json().catch(()=>({}));alert('ما انرسلت: '+(e.error||r.status));}
+      else{const j=await r.json();if(j&&j.voice===false)
+        console.warn('انرسلت كمرفق صوتي — التحويل لـogg ما اشتغل');}
+    }catch(e){alert('ما انرسلت: '+e.message);}
+    $('btnVoice').disabled=false;recUI(false);open_(cur);
+  };
+  mediaRec.start();recUI(true);
+  recTimer=setInterval(()=>{
+    const s2=Math.floor((Date.now()-recStart)/1000);
+    $('rectime').textContent=String(Math.floor(s2/60)).padStart(2,'0')+':'+String(s2%60).padStart(2,'0');
+    if(s2>=180)stopRec();                               // سقف ٣ دقائق
+  },250);
+}
+function stopRec(){try{if(mediaRec&&mediaRec.state!=='inactive')mediaRec.stop();}catch(e){}}
+$('btnVoice').onclick=()=>{(mediaRec&&mediaRec.state==='recording')?stopRec():startRec();};
+
+/* ── إرسال موقع الشركة ── */
+$('btnLoc').onclick=async()=>{
+  if(!cur)return alert('اختر محادثة أول');
+  if(!confirm('أرسل موقع الشركة لهذا الزبون؟'))return;
+  $('btnLoc').disabled=true;
+  try{
+    const r=await fetch('/inbox/api/send-location',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({key:KEY,phone:cur})});
+    if(!r.ok){const e=await r.json().catch(()=>({}));alert('ما انرسل: '+(e.error||r.status));}
+  }catch(e){alert('ما انرسل: '+e.message);}
+  $('btnLoc').disabled=false;open_(cur);
+};
+
+/* ── إرسال عقد المتاجر ── */
+$('btnDoc').onclick=async()=>{
+  if(!cur)return alert('اختر محادثة أول');
+  const store=(prompt('اسم المتجر الإلكتروني:')||'').trim();
+  if(!store)return;
+  const owner=(prompt('اسم صاحب المتجر / ممثّله:')||'').trim();
+  if(!owner)return;
+  const pick=(prompt('أي نسخة ترسل؟\n\n1 = مسودة للمراجعة (بدون ختم)\n2 = نسخة نهائية مختومة','1')||'').trim();
+  if(pick!=='1'&&pick!=='2')return;
+  const seal=pick==='2';
+  if(!confirm((seal?'أرسل النسخة النهائية المختومة؟':'أرسل المسودة للمراجعة؟')
+    +'\n\nالمتجر: '+store+'\nيمثله: '+owner))return;
+  $('btnDoc').disabled=true;$('btnDoc').textContent='⏳';
+  try{
+    const r=await fetch('/inbox/api/send-contract',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({key:KEY,phone:cur,store:store,owner:owner,seal:seal})});
+    if(!r.ok){const e=await r.json().catch(()=>({}));alert('ما انرسل: '+(e.error||r.status));}
+  }catch(e){alert('ما انرسل: '+e.message);}
+  $('btnDoc').disabled=false;$('btnDoc').textContent='📄';open_(cur);
+};
+
 /* ── تنبيه صوتي ── */
 let soundOn=true; try{soundOn=localStorage.getItem('hsaSound')!=='0';}catch(e){}
 let actx=null,lastUnread=null;
@@ -668,6 +799,63 @@ loadList();setInterval(()=>{loadList();if(cur&&document.hasFocus())open_(cur);},
 
 /* ═══════════════════════════ التركيب ═══════════════════════════ */
 
+
+/* ═══════════════ الوسائط ═══════════════ */
+
+const MEDIA_DIR = path.join(DATA_DIR, 'media');
+try { fs.mkdirSync(MEDIA_DIR, { recursive: true }); } catch { /* موجود */ }
+
+const EXT = {
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+  'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/aac': 'aac',
+  'audio/amr': 'amr', 'video/mp4': 'mp4', 'application/pdf': 'pdf',
+};
+const safeId = (id) => String(id).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 128);
+
+/** ينزّل الوسيط مرة وحدة ويخزنه على القرص الدائم — واتساب تحذفه بعد ٣٠ يوم */
+async function fetchMedia(wa, mediaId) {
+  const id = safeId(mediaId);
+  if (!id) throw new Error('معرّف وسيط غير صالح');
+  const metaPath = path.join(MEDIA_DIR, `${id}.json`);
+  if (fs.existsSync(metaPath)) {
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    const binPath = path.join(MEDIA_DIR, meta.file);
+    if (fs.existsSync(binPath)) return { path: binPath, mime: meta.mime };
+  }
+  const { buffer, mime } = await wa.downloadMedia(id);
+  const file = `${id}.${EXT[mime.split(';')[0]] || 'bin'}`;
+  fs.writeFileSync(path.join(MEDIA_DIR, file), buffer);
+  fs.writeFileSync(metaPath, JSON.stringify({ file, mime, at: Date.now() }));
+  return { path: path.join(MEDIA_DIR, file), mime };
+}
+
+/** يحوّل تسجيل المتصفح (webm/opus) إلى ogg/opus — شرط ميتا للبصمة الصوتية.
+    نسخ بلا إعادة ترميز، فالعملية لحظية وبلا خسارة جودة. */
+function toOggOpus(inputBuf, inMime) {
+  return new Promise((resolve) => {
+    if (/ogg/i.test(inMime)) return resolve({ buffer: inputBuf, voice: true });
+    let bin;
+    try { bin = require('@ffmpeg-installer/ffmpeg').path; } catch { bin = 'ffmpeg'; }
+    const tmpIn = path.join(os.tmpdir(), `v${Date.now()}.in`);
+    try { fs.writeFileSync(tmpIn, inputBuf); } catch { return resolve({ buffer: inputBuf, voice: false }); }
+    const args = ['-hide_banner', '-loglevel', 'error', '-i', tmpIn,
+      '-vn', '-c:a', 'libopus', '-b:a', '32k', '-ar', '48000', '-ac', '1', '-f', 'ogg', 'pipe:1'];
+    let out = [];
+    let done = false;
+    const finish = (r) => { if (done) return; done = true; try { fs.unlinkSync(tmpIn); } catch {} resolve(r); };
+    let p;
+    try { p = spawn(bin, args); } catch { return finish({ buffer: inputBuf, voice: false }); }
+    p.stdout.on('data', (d) => out.push(d));
+    p.on('error', () => finish({ buffer: inputBuf, voice: false }));
+    p.on('close', (code) => {
+      const buf = Buffer.concat(out);
+      if (code === 0 && buf.length > 100) finish({ buffer: buf, voice: true });
+      else finish({ buffer: inputBuf, voice: false });   // ما انحوّل → يروح كمرفق صوتي عادي
+    });
+    setTimeout(() => { try { p.kill('SIGKILL'); } catch {} finish({ buffer: inputBuf, voice: false }); }, 20000);
+  });
+}
+
 function mount(app, wa) {
   const ok = (req) => {
     const key = req.query.key || req.body?.key;
@@ -708,6 +896,114 @@ function mount(app, wa) {
       setStatus(phone, 'open');               // وتنتقل تلقائياً لقيد المعالجة
       res.json({ ok: true });
     } catch (e) {
+      res.status(502).json({ error: e.details?.error?.message || e.message });
+    }
+  });
+
+
+  /* ── وسيط الوسائط: يخدم الصور والصوت للمتصفح ──
+     المفتاح بالكويري لأن <img> و<audio> ما يكدرون يرسلون هيدرز */
+  app.get('/inbox/media/:id', async (req, res) => {
+    if (!ok(req)) return res.status(401).send('مفتاح غير صحيح');
+    try {
+      const { path: p2, mime } = await fetchMedia(wa, req.params.id);
+      res.setHeader('Content-Type', mime);
+      res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+      fs.createReadStream(p2).pipe(res);
+    } catch (e) {
+      console.error('[inbox] وسيط فشل:', e.message);
+      res.status(404).send('الوسيط مو متوفر');
+    }
+  });
+
+  /* ── إرسال رسالة صوتية من الحاسبة ──
+     المتصفح يسجّل webm/opus، نحوّلها ogg/opus حتى تنعرض بصمة صوتية */
+  app.post('/inbox/api/send-voice',
+    express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '16mb' }),
+    async (req, res) => {
+      if (!ok(req)) return res.status(401).json({ error: 'مفتاح غير صحيح' });
+      const phone = String(req.query.phone || '');
+      if (!phone) return res.status(400).json({ error: 'phone مطلوب' });
+      const raw = req.body;
+      if (!raw || !raw.length) return res.status(400).json({ error: 'ماكو صوت' });
+      try {
+        const inMime = req.get('content-type') || 'audio/webm';
+        const { buffer, voice } = await toOggOpus(raw, inMime);
+        const mime = voice ? 'audio/ogg' : (inMime.split(';')[0] || 'audio/mpeg');
+        const mediaId = await wa.uploadMedia(buffer, mime, voice ? 'voice.ogg' : 'audio');
+        await wa.sendAudio(phone, mediaId, { voice, by: 'agent' });
+        // نخزّنها محلياً حتى تنعرض بالإنبوكس فوراً بلا ما ننزّلها من واتساب
+        try {
+          const id = safeId(mediaId);
+          const file = `${id}.${voice ? 'ogg' : 'bin'}`;
+          fs.writeFileSync(path.join(MEDIA_DIR, file), buffer);
+          fs.writeFileSync(path.join(MEDIA_DIR, `${id}.json`), JSON.stringify({ file, mime, at: Date.now() }));
+        } catch { /* الكاش اختياري */ }
+        const t = thread(phone);
+        const last = t.messages[t.messages.length - 1];
+        if (last && last.dir === 'out') {
+          last.media = { kind: 'audio', id: mediaId, mime, voice };
+          appendFile(last);
+        }
+        setBotPaused(phone, true);
+        setStatus(phone, 'open');
+        res.json({ ok: true, voice });
+      } catch (e) {
+        console.error('[inbox] إرسال صوت فشل:', e.message, e.details || '');
+        res.status(502).json({ error: e.details?.error?.message || e.message });
+      }
+    });
+
+  /* ── إرسال موقع الشركة ──
+     الإحداثيات من متغيّرات البيئة حتى ما تنحفر بالكود */
+  app.post('/inbox/api/send-location', async (req, res) => {
+    if (!ok(req)) return res.status(401).json({ error: 'مفتاح غير صحيح' });
+    const { phone } = req.body || {};
+    if (!phone) return res.status(400).json({ error: 'phone مطلوب' });
+    const lat = Number(process.env.COMPANY_LAT);
+    const lng = Number(process.env.COMPANY_LNG);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return res.status(400).json({ error: 'COMPANY_LAT و COMPANY_LNG مو مضبوطين بمتغيّرات Railway' });
+    }
+    try {
+      await wa.sendLocation(String(phone), {
+        lat, lng,
+        name: process.env.COMPANY_NAME || 'هسة',
+        address: process.env.COMPANY_ADDRESS || '',
+      }, 'agent');
+      setBotPaused(phone, true);
+      setStatus(phone, 'open');
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(502).json({ error: e.details?.error?.message || e.message });
+    }
+  });
+
+  /* ── إرسال عقد المتاجر ──
+     نفس ملف العقد الأصلي، نعبّي بس اسم المتجر واسم ممثّله */
+  app.post('/inbox/api/send-contract', async (req, res) => {
+    if (!ok(req)) return res.status(401).json({ error: 'مفتاح غير صحيح' });
+    const { phone, store, owner } = req.body || {};
+    const sealed = req.body?.seal !== false;   // الافتراضي: نسخة مختومة
+    if (!phone) return res.status(400).json({ error: 'phone مطلوب' });
+    try {
+      const contract = require('./contract');
+      const pdf  = await contract.fillContract({ store, owner, seal: sealed });
+      const name = contract.fileName(store, sealed);
+      const id   = await wa.uploadMedia(pdf, 'application/pdf', name);
+      await wa.sendDocument(String(phone), id, {
+        filename: name,
+        caption: sealed
+          ? `عقد خدمات — ${contract.clean(store)}`
+          : `مسودة عقد للمراجعة — ${contract.clean(store)}`,
+        by: 'agent',
+      });
+      setBotPaused(phone, true);
+      setStatus(phone, 'open');
+      console.log(`[contract] 📄 ${sealed ? 'مختوم' : 'مسودة'} ${phone} — ${contract.clean(store)}`);
+      res.json({ ok: true, file: name, sealed });
+    } catch (e) {
+      console.error('[inbox] إرسال العقد فشل:', e.message, e.details || '');
       res.status(502).json({ error: e.details?.error?.message || e.message });
     }
   });

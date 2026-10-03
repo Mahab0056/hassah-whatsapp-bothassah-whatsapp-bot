@@ -17,6 +17,7 @@ const F = require('./flows');
 const inbox = require('./inbox');
 const optout = require('./optout');
 const ai = require('./ai');
+const catalog = require('./catalog');
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
@@ -78,6 +79,34 @@ function parseIncoming(msg) {
       location: { lat: l.latitude, lng: l.longitude, name: l.name || '', address: l.address || '' },
     };
   }
+
+  /* ── الوسائط: صورة · صوت · فيديو · ملف · ملصق ──
+     ننتزع معرّف الوسيط حتى الإنبوكس يكدر يعرضه. الكابشن ينحسب نص. */
+  const MEDIA = {
+    image:    { icon: '🖼️', label: 'صورة' },
+    audio:    { icon: '🎤', label: 'رسالة صوتية' },
+    video:    { icon: '🎬', label: 'فيديو' },
+    document: { icon: '📄', label: 'ملف' },
+    sticker:  { icon: '🌟', label: 'ملصق' },
+  };
+  if (MEDIA[msg.type]) {
+    const m = msg[msg.type] || {};
+    const meta = MEDIA[msg.type];
+    const caption = (m.caption || '').trim();
+    return {
+      text: caption || `${meta.icon} ${m.filename || meta.label}`,
+      id: null,
+      media: {
+        kind: msg.type,
+        id: m.id || '',
+        mime: m.mime_type || '',
+        caption,
+        filename: m.filename || '',
+        voice: msg.type === 'audio' ? !!m.voice : false,
+      },
+    };
+  }
+
   return { text: '', id: null };
 }
 
@@ -535,6 +564,8 @@ app.post('/webhook', async (req, res) => {
           inbox.record(phone, 'in', label, {
             step: getSession(phone).step,
             name: value.contacts?.[0]?.profile?.name,
+            media: incoming.media || null,
+            location: incoming.location || null,
           });
 
           // الموظف مسك المحادثة → البوت يسكت (إلا إذا كتب 0)
@@ -716,13 +747,16 @@ app.post('/templates', async (req, res) => {
   }
 });
 
+/* ═══════════════ كتالوج المنتجات (feed لميتا) ═══════════════ */
+catalog.mount(app);
+
 /* ═══════════════ الإنبوكس ═══════════════ */
 inbox.mount(app, wa);
 
 /* ═══════════════ صحة السيرفر ═══════════════ */
 app.get('/health', (_, res) =>
   res.json({ ok: true, sessions: sessions.size, workingHours: isWorkingHours(),
-             optedOut: optout.count() }));
+             optedOut: optout.count(), products: catalog.count() }));
 
 const PORT = process.env.PORT || 3000;
 if (require.main === module) {
@@ -731,7 +765,8 @@ if (require.main === module) {
     console.log(`   الويبهوك:  POST /webhook`);
     console.log(`   إرسال OTP: POST /send-otp`);
     console.log(`   إشعارات:   POST /send-template`);
-    console.log(`   الإنبوكس:  GET  /inbox?key=...\n`);
+    console.log(`   الإنبوكس:  GET  /inbox?key=...`);
+    console.log(`   الكتالوج:  GET  /feed.csv   ·  POST /products\n`);
   });
 }
 

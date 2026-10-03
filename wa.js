@@ -181,7 +181,93 @@ function sendTemplate(to, templateName, params = [], lang = process.env.TEMPLATE
   });
 }
 
+
+/* ================================================================
+   الوسائط — رفع وتنزيل
+   ================================================================ */
+
+/** يرجّع رابط التنزيل + النوع من معرّف الوسيط */
+async function mediaInfo(mediaId) {
+  return api('GET', `/${encodeURIComponent(mediaId)}`);
+}
+
+/** ينزّل الوسيط فعلياً. خطوتين: نجيب الرابط، وبعدين ننزّله عبر 360dialog */
+async function downloadMedia(mediaId) {
+  const info = await mediaInfo(mediaId);
+  if (!info || !info.url) throw new Error('ماكو رابط للوسيط');
+  // ميتا ترجّع رابط lookaside — 360dialog تطلب نبدّل الدومين ونمرّر المفتاح
+  const url = String(info.url)
+    .replace(/\\/g, '')
+    .replace('https://lookaside.fbsbx.com', API_BASE);
+  const res = await fetch(url, { headers: { 'D360-API-KEY': API_KEY } });
+  if (!res.ok) {
+    const e = new Error(`تنزيل الوسيط فشل ${res.status}`);
+    e.details = await res.text().catch(() => '');
+    throw e;
+  }
+  const buf = Buffer.from(await res.arrayBuffer());
+  return { buffer: buf, mime: info.mime_type || 'application/octet-stream', size: buf.length };
+}
+
+/** يرفع ملف ويرجّع معرّف الوسيط */
+async function uploadMedia(buffer, mime, filename = 'file') {
+  const fd = new FormData();
+  fd.append('messaging_product', 'whatsapp');
+  fd.append('file', new Blob([buffer], { type: mime }), filename);
+  const res = await fetch(`${API_BASE}/media`, {
+    method: 'POST',
+    headers: { 'D360-API-KEY': API_KEY },
+    body: fd,
+  });
+  const text = await res.text();
+  let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
+  if (!res.ok || !json.id) {
+    const e = new Error(`رفع الوسيط فشل ${res.status}`);
+    e.details = json;
+    throw e;
+  }
+  return json.id;
+}
+
+/* ---------- إرسال صوت ----------
+   ملاحظة: البصمة الصوتية (voice note) تتطلب ogg/opus + voice:true،
+   غير هيچي تنعرض كمرفق صوتي عادي. */
+function sendAudio(to, mediaId, { voice = true, by = 'agent' } = {}) {
+  logOut(to, voice ? '🎤 رسالة صوتية' : '🔊 ملف صوتي', by);
+  return send({ ...rcpt(to), to, type: 'audio', audio: { id: mediaId, voice } });
+}
+
+/* ---------- إرسال صورة ---------- */
+function sendImage(to, mediaId, caption = '', by = 'agent') {
+  logOut(to, caption ? `🖼️ ${caption}` : '🖼️ صورة', by);
+  const image = { id: mediaId };
+  if (caption) image.caption = caption.slice(0, 1024);
+  return send({ ...rcpt(to), to, type: 'image', image });
+}
+
+/* ---------- إرسال ملف (PDF وغيره) ---------- */
+function sendDocument(to, mediaId, { filename = 'file.pdf', caption = '', by = 'agent' } = {}) {
+  logOut(to, caption ? `📄 ${caption}` : `📄 ${filename}`, by);
+  const document = { id: mediaId, filename: String(filename).slice(0, 240) };
+  if (caption) document.caption = String(caption).slice(0, 1024);
+  return send({ ...rcpt(to), to, type: 'document', document });
+}
+
+/* ---------- إرسال موقع ---------- */
+function sendLocation(to, { lat, lng, name = '', address = '' }, by = 'agent') {
+  logOut(to, `📍 ${name || address || `${lat},${lng}`}`, by);
+  return send({
+    ...rcpt(to), to, type: 'location',
+    location: {
+      latitude: Number(lat), longitude: Number(lng),
+      ...(name ? { name: String(name).slice(0, 100) } : {}),
+      ...(address ? { address: String(address).slice(0, 200) } : {}),
+    },
+  });
+}
+
 module.exports = {
-  sendText, sendButtons, sendList, markRead, humanPause, sendOtp, sendTemplate,
+  sendText, sendAudio, sendImage, sendLocation, sendDocument,
+  mediaInfo, downloadMedia, uploadMedia, sendButtons, sendList, markRead, humanPause, sendOtp, sendTemplate,
   listTemplates, createTemplate, deleteTemplate, phoneNumbers,
 };
